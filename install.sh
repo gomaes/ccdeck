@@ -156,6 +156,7 @@ echo
 info "done."
 echo "  Web UI : (login URLs with token: ccdeck url)"
 "$TARGET" url | sed 's/?token=.*//; s/^/           /'
+echo "  Server : ccdeck start | ccdeck status | ccdeck stop"
 echo "  CLI    : ccdeck new myproj --dir ~/src/myproj && ccdeck ls"
 BIND_NOW="$(sed -n 's/^bind[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "${XDG_CONFIG_HOME:-$HOME/.config}/ccdeck/config.toml" | head -1)"
 echo "  Listen : ${BIND_NOW:-?} (change: ./install.sh --bind 127.0.0.1 | --bind 0.0.0.0)"

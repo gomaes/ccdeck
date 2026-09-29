@@ -81,6 +81,11 @@ def cmd_ls(args):
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
         return 0
+    print_sessions(rows)
+    return 0
+
+
+def print_sessions(rows):
     if not rows:
         print("no sessions (create one with: ccdeck new <name> --dir PATH)")
         return 0
@@ -95,6 +100,50 @@ def cmd_ls(args):
         if r["state"] == "rate-limited" and r.get("rate_limit_reset"):
             print("    resets at %s" % r["rate_limit_reset"])
     return 0
+
+
+def cmd_start(args):
+    from . import service
+
+    m = _manager()
+    rc = service.start(m.paths, m.cfg)
+    if rc == 0:
+        print()
+        service.status(m.paths, m.cfg, m)
+    return rc
+
+
+def cmd_stop(args):
+    from . import service
+
+    m = _manager()
+    rc = service.stop(m.paths, m.cfg, sessions_note=not args.all)
+    if args.all:
+        names = []
+        for rec in m.store.all():
+            if m.tmux.has_session(rec["name"]) or not rec.get("stopped"):
+                m.stop(rec["name"])
+                names.append(rec["name"])
+        print("stopped sessions: %s (restore with: ccdeck resume --all)" % (", ".join(names) or "(none)"))
+    return rc
+
+
+def cmd_status(args):
+    from . import service
+
+    m = _manager()
+    if args.json:
+        st = service.server_state(m.paths, m.cfg)
+        st["answering"] = service.health(m.cfg)
+        st["sessions"] = m.list_status()
+        print(json.dumps(st, indent=2, ensure_ascii=False, default=str))
+        return 0 if st["running"] else 3
+    rc = service.status(m.paths, m.cfg, m)
+    rows = m.list_status()
+    if rows:
+        print()
+        print_sessions(rows)
+    return rc
 
 
 def cmd_attach(args):
@@ -318,6 +367,14 @@ def cmd_serve(args):
         return 2
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
+    from . import service
+
+    other = service.read_pid(m.paths)
+    if other and other != os.getpid():
+        log("ccdeck serve is already running (pid %d); use `ccdeck stop` first" % other)
+        return 1
+    service.write_pid(m.paths)
+
     restored = m.reconcile(restore=True, log=log)
     log("ccdeck %s: %d session(s), restored %d" % (__version__, len(m.store.all()), len(restored)))
 
@@ -351,6 +408,7 @@ def cmd_serve(args):
         ttyd.stop()
         inner.shutdown()
         front.server_close()
+        service.remove_pid(m.paths)
         log("ccdeck stopped (tmux sessions keep running)")
     return 0
 
@@ -412,7 +470,18 @@ def build_parser():
     s.add_argument("-n", "--lines", default=2000, type=lambda v: v if v == "all" else int(v))
     s.set_defaults(func=cmd_log)
 
-    s = sub.add_parser("serve", help="run web UI + watchdog (used by the systemd service)")
+    s = sub.add_parser("start", help="start the web UI server (systemd service, or in the background)")
+    s.set_defaults(func=cmd_start)
+
+    s = sub.add_parser("stop", help="stop the web UI server (Claude sessions keep running)")
+    s.add_argument("--all", action="store_true", help="also stop every Claude session (kept in sessions.json)")
+    s.set_defaults(func=cmd_stop)
+
+    s = sub.add_parser("status", help="show server and session status")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("serve", help="run web UI + watchdog in the foreground (used by start / systemd)")
     s.add_argument("--bind")
     s.add_argument("--port", type=int)
     s.set_defaults(func=cmd_serve)
@@ -435,10 +504,19 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
-        parser.print_help()
-        return 2
+        # bare `ccdeck`: show the status and the most common commands
+        try:
+            rc = cmd_status(argparse.Namespace(json=False))
+        except CCDeckError as e:
+            print("ccdeck: %s" % e, file=sys.stderr)
+            rc = 1
+        print("\ncommands: ccdeck start | stop | status | new <name> | attach <name> | url | --help")
+        return rc
     try:
         return args.func(args) or 0
+    except BrokenPipeError:  # e.g. `ccdeck status | head`
+        sys.stderr.close()
+        return 0
     except CCDeckError as e:
         print("ccdeck: %s" % e, file=sys.stderr)
         return 1

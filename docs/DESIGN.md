@@ -139,7 +139,8 @@ ccdeck resume <name> | --all
 ccdeck rename <old> <new>
 ccdeck send <name> (--key KEY | TEXT [--enter])
 ccdeck log <name> [-n LINES]
-ccdeck serve [--bind ADDR] [--port N]
+ccdeck start | stop [--all] | status [--json]   # Web UI サーバー制御 (systemd or バックグラウンド)
+ccdeck serve [--bind ADDR] [--port N]           # フォアグラウンド実行
 ccdeck doctor
 ccdeck setup      # 設定・tmux.conf・systemd unit 生成 (install.sh が呼ぶ)
 ccdeck url        # トークン付きログイン URL を表示

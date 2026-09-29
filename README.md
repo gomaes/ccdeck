@@ -39,6 +39,11 @@ git clone <this repo> ccdeck && cd ccdeck
 インストール後:
 
 ```bash
+ccdeck              # 状態表示 (= ccdeck status)
+ccdeck start        # Web UI サーバーを起動
+ccdeck status       # サーバー / セッションの状態
+ccdeck stop         # Web UI サーバーを停止 (Claude セッションは tmux で動き続ける)
+ccdeck stop --all   # セッションも含めてすべて停止 (再開: ccdeck start && ccdeck resume --all)
 ccdeck url          # トークン付きのログイン URL を表示 (http://<このマシンのIP>:8787/?token=...)
 ccdeck doctor       # 環境診断
 ```
@@ -62,7 +67,8 @@ ccdeck restart api [--fresh]                    # 再起動 (既定は会話を 
 ccdeck resume api | ccdeck resume --all         # dead を復旧
 ccdeck kill api [--keep]                        # 停止して記録削除 (--keep は記録を残す)
 ccdeck rename api backend
-ccdeck serve                                    # Web UI + watchdog (通常は systemd から起動)
+ccdeck start / stop [--all] / status [--json]    # Web UI サーバーの起動・停止・状態確認
+ccdeck serve                                    # Web UI + watchdog をフォアグラウンドで実行 (start / systemd が使用)
 ```
 
 セッション名は `^[a-zA-Z0-9_-]{1,32}$` に制限されます。
@@ -95,6 +101,16 @@ ccdeck serve                                    # Web UI + watchdog (通常は s
 - **stall**: 無出力が `stall_seconds` を超えたら 1 回だけ送信(出力が再開するまで再送しません)
 
 いずれも既定では無効です。UI の「設定」または `ccdeck new --auto-continue` で有効にします。
+
+### サーバーの起動・停止 (`start` / `stop` / `status`)
+
+- systemd の user unit がインストール済みで使える場合は `systemctl --user start|stop ccdeck` を実行します
+  (ログ: `journalctl --user -u ccdeck`)
+- systemd --user が使えない環境では `ccdeck serve` をバックグラウンドで起動します
+  (pid: `~/.local/share/ccdeck/run/serve.pid`、ログ: `~/.local/share/ccdeck/serve.log`)。
+  この場合、マシン再起動後の自動起動はされないので `ccdeck start` を実行してください
+- `stop` は Web UI だけを止めます。claude は tmux 上で動き続け、次の `start` 時にそのまま表示されます
+- `status` の終了コードは起動中 0 / 停止中 3 です
 
 ## 復旧の仕組み
 
