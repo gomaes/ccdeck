@@ -124,3 +124,30 @@ def test_stop_and_restart_let_the_program_exit_cleanly(mgr, env):
     mgr.stop("graceful")
     assert len(marker.read_text().split()) == 2
     assert not mgr.tmux.has_session("graceful")
+
+
+def test_stop_kills_detached_leftovers(mgr, env):
+    """Processes that survive the tmux kill (ignore SIGHUP / Ctrl+C) are terminated too."""
+    pidfile = env / "child.pid"
+    script = env / "stubborn.sh"
+    # the child ignores INT and HUP and runs in the background; the parent exits on Ctrl+C
+    script.write_text("#!/bin/sh\n(trap '' INT HUP; echo $$ > /dev/null; exec sleep 600) &\n"
+                      "echo $! > %s\necho ready\nwait\n" % pidfile)
+    script.chmod(0o755)
+    mgr.create("stubborn", cwd=str(env), cmd=str(script))
+    assert wait_for(lambda: pidfile.exists() and pidfile.read_text().strip())
+    child = int(pidfile.read_text())
+    os.kill(child, 0)
+    mgr.stop("stubborn")
+    assert wait_for(lambda: not os.path.exists("/proc/%d" % child) or
+                    open("/proc/%d/stat" % child).read().split()[2] == "Z", timeout=8)
+
+
+def test_remote_control_detection(env):
+    from ccdeck import procs
+
+    assert procs.is_remote_control(["/usr/bin/claude", "rc", "--name", "x"])
+    assert procs.is_remote_control(["claude", "--rc"])
+    assert procs.is_remote_control(["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "remote-control"])
+    assert not procs.is_remote_control(["claude", "--model", "opus"])
+    assert not procs.is_remote_control(["vim", "rc"])

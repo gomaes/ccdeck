@@ -106,6 +106,30 @@ def run_checks(manager):
     else:
         add(FAIL, "claude", "not found in PATH (%s). Sessions are started via `$SHELL -lc`, so make sure "
             "your login shell PATH contains it" % os.environ.get("PATH", ""))
+    # Remote Control servers: leftovers make `claude rc` fail ("already served" / 404)
+    from . import procs
+
+    allp = procs.all_procs()
+    managed = {}
+    for name, pane in manager.tmux.panes().items():
+        if pane.pid:
+            for pid in procs.tree(pane.pid, allp):
+                managed[pid] = name
+    servers = procs.remote_control_servers(allp)
+    by_cwd = {}
+    for p in servers:
+        by_cwd.setdefault(p.cwd, []).append(p)
+        owner = managed.get(p.pid)
+        if owner:
+            add(OK, "remote-control pid %d" % p.pid, "ccdeck session %s, %s" % (owner, p.cwd))
+        else:
+            add(WARN, "remote-control pid %d" % p.pid, "NOT managed by ccdeck (%s): %s — if it is a leftover: kill %d"
+                % (p.cwd, " ".join(p.argv)[:80], p.pid))
+    for cwd, ps in by_cwd.items():
+        if len(ps) > 1:
+            add(FAIL, "remote-control duplicates", "%s is served by %d processes (%s): claude rc will fail"
+                % (cwd, len(ps), ", ".join(str(p.pid) for p in ps)))
+
     proj = os.path.join(claude.claude_home(), "projects")
     add(OK if os.path.isdir(proj) else WARN, "claude projects dir", proj)
 

@@ -9,7 +9,7 @@ import time
 import re
 import secrets
 
-from . import NAME_RE, CCDeckError, claude, detect, validate_name, validate_title
+from . import NAME_RE, CCDeckError, claude, detect, procs, validate_name, validate_title
 from .config import Paths, ensure_files, load_config
 from .store import Store, new_record
 from .tmux import ALLOWED_KEYS, Tmux
@@ -125,6 +125,34 @@ class Manager:
                 return True
         return False
 
+    def _shutdown_pane(self, name):
+        """graceful_exit + remember the pane's process tree, so that processes surviving the
+        tmux kill/respawn (e.g. detached children) can be terminated with finish_shutdown()."""
+        pane = self.tmux.panes().get(name)
+        snap = {}
+        if pane is not None and not pane.dead and pane.pid:
+            snap = procs.snapshot(procs.tree(pane.pid))
+        self.graceful_exit(name)
+        return snap
+
+    @staticmethod
+    def _finish_shutdown(snap):
+        if snap:
+            procs.terminate(snap)
+
+    def _check_remote_control_free(self, rec, command):
+        """`claude rc` refuses to start when the folder is already served by another rc."""
+        if not claude.is_claude_cmd(command) or claude.subcommand(command) not in claude.REMOTE_CONTROL_SUBCOMMANDS:
+            return
+        allp = procs.all_procs()
+        pane = self.tmux.panes().get(rec["name"])
+        own = set(procs.tree(pane.pid, allp)) if pane is not None and pane.pid else set()
+        for p in procs.remote_control_servers(allp):
+            if p.pid not in own and p.cwd == rec["cwd"]:
+                raise CCDeckError(
+                    "%s is already served by another claude remote-control (pid %d: %s). "
+                    "Stop it first (kill %d)" % (rec["cwd"], p.pid, " ".join(p.argv)[:120], p.pid), 409)
+
     def _launch(self, rec, command):
         name = rec["name"]
         self.tmux.ensure_server()
@@ -132,9 +160,11 @@ class Manager:
         cbin = claude.find_bin(self.cfg["claude"].get("bin", "claude"),
                                claude.env_file_path(self.paths.env_file))
         argv = self._shell_argv(claude.absolutize(command, cbin))
+        self._check_remote_control_free(rec, command)
         if self.tmux.has_session(name):
-            self.graceful_exit(name)
+            snap = self._shutdown_pane(name)
             self.tmux.respawn(name, rec["cwd"], argv, env)
+            self._finish_shutdown(snap)
         else:
             self.tmux.new_session(name, rec["cwd"], argv, env)
         self._set_window_title(name, self.title_of(rec))
@@ -210,16 +240,18 @@ class Manager:
 
     def stop(self, name):
         self.store.require(name)
-        self.graceful_exit(name)
+        snap = self._shutdown_pane(name)
         self.tmux.kill_session(name)
+        self._finish_shutdown(snap)
         with self.lock:
             self.runtime.get(name, {}).pop("status", None)
         return self._update(name, stopped=True, state="dead")
 
     def delete(self, name):
         validate_name(name)
-        self.graceful_exit(name)
+        snap = self._shutdown_pane(name)
         self.tmux.kill_session(name)
+        self._finish_shutdown(snap)
         rec = self.store.delete(name)
         with self.lock:
             self.runtime.pop(name, None)

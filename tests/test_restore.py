@@ -135,7 +135,8 @@ class FakeTmux:
         pass
 
     def panes(self):
-        return {n: PaneInfo(n, s["dead"], 0 if s["dead"] else None, "claude", 1, 0, s["cwd"])
+        # pid None: no real process behind the fake pane (never point this at pid 1!)
+        return {n: PaneInfo(n, s["dead"], 0 if s["dead"] else None, "claude", None, 0, s["cwd"])
                 for n, s in self.sessions.items()}
 
     def capture(self, name, lines=None, join=False):
@@ -361,3 +362,13 @@ def test_find_bin_uses_service_env_path(tmp_path, monkeypatch):
     envf.write_text("# x\nPATH=%s:/usr/bin\nSHELL=/bin/bash\n" % d)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     assert claude.find_bin("claude", claude.env_file_path(str(envf))) == str(exe)
+
+
+def test_process_helpers_never_target_init_or_ourselves():
+    from ccdeck import procs
+
+    assert procs.tree(1) == [] and procs.tree(0) == [] and procs.tree(None) == []
+    me = os.getpid()
+    snap = procs.snapshot([1, me, os.getppid()])
+    assert snap == {}
+    assert procs.terminate({me: ["whatever"], 1: ["init"]}, timeout=0.1) == []
