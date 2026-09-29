@@ -56,7 +56,8 @@ URL を一度開くと Cookie が設定され、以後はトークン無しで�
 ### CLI
 
 ```bash
-ccdeck new api --dir ~/src/api                  # claude を起動 (--session-id を付与して ID を記録)
+ccdeck new api                                  # ~/claude/<ランダム> を作って claude を起動
+ccdeck new api2 --dir ~/src/api                 # 既存ディレクトリで起動 (--session-id を付与して ID を記録)
 ccdeck new web --dir ~/src/web --cmd "claude --model opus" --auto-continue
 ccdeck ls                                       # 一覧 (状態 / 無出力時間 / claude セッションID / cwd)
 ccdeck attach api                               # ターミナルから接続 (Ctrl-b d で離脱)
@@ -65,7 +66,8 @@ ccdeck send api --key Escape                    # キー送信 (Enter, Escape, C
 ccdeck log api -n 500                           # 画面履歴 (tmux capture-pane)
 ccdeck restart api [--fresh]                    # 再起動 (既定は会話を --resume で引き継ぐ)
 ccdeck resume api | ccdeck resume --all         # dead を復旧
-ccdeck kill api [--keep]                        # 停止して記録削除 (--keep は記録を残す)
+ccdeck kill api [--keep] [--keep-dir]           # 停止して記録と作業ディレクトリを削除 (--keep は記録を残す)
+ccdeck workspace [PATH]                         # 作業ディレクトリのルートを表示 / 変更
 ccdeck rename api backend
 ccdeck start / stop [--all] / status [--json]    # Web UI サーバーの起動・停止・状態確認
 ccdeck serve                                    # Web UI + watchdog をフォアグラウンドで実行 (start / systemd が使用)
@@ -84,6 +86,41 @@ ccdeck serve                                    # Web UI + watchdog をフォア
 - 名前変更は ccdeck 上には即反映されますが、claude 側の名前は **次の再起動(「再起動」ボタン / `ccdeck restart`)** で反映されます
 - `claude rc` セッションの復旧・再起動は、同じ名前で新しい Remote Control セッションを作り直します
   (rc の `--session-id` / `--continue` は会話 ID ではなく RC セッションの再接続用なので、ccdeck は付けません)
+
+### 作業ディレクトリ(セッションごとに自動作成・削除)
+
+- 新規作成時にディレクトリを指定しなければ、**作業ディレクトリのルート(既定 `~/claude`)直下に
+  ランダムな名前のディレクトリ**を作り(例: `~/claude/d2evzq4b6k`、パーミッション 700)、そこがセッションの cwd になります
+  - 名前は `abcdefghjkmnpqrstuvwxyz23456789`(0/o, 1/l/i など紛らわしい文字を除いた 31 文字)から **10 文字**(約 49 ビット)
+- **セッションを削除するとこのディレクトリも中身ごと削除**されます(`ccdeck kill NAME --keep-dir` で残せます)
+  - 削除するのは ccdeck が作ったディレクトリだけです。既存ディレクトリを指定したセッション、シンボリックリンク、
+    ルート直下でないもの、ランダム名の形式でないもの、他のセッションも使っているものは削除しません
+- ルートは Web UI の「⋯」メニュー、または `ccdeck workspace PATH` で変更できます(`<data>/settings.json` に保存)
+- 既存のディレクトリで作業したい場合は、新規作成画面で「既存のディレクトリを使う」を選ぶか `ccdeck new NAME --dir PATH`
+
+### 権限(セッションごと)
+
+新規作成画面の「権限」、または各セッションの「設定」で選べます(変更は次の再起動で反映)。
+Claude Code の設定ファイル (`--settings`) とフラグに変換して渡します。
+
+| 項目 | 選択肢 | 対応する Claude Code の設定 |
+|---|---|---|
+| モード | 都度確認 / 編集は自動許可 / 計画のみ / 許可済み以外は自動拒否 / すべて許可(危険) | `--permission-mode` (`default` `acceptEdits` `plan` `dontAsk` `bypassPermissions`) |
+| 読み取り範囲 | 作業ディレクトリのみ(外は都度確認) / ホーム全体 / どこでも | `permissions.allow`: `Read(~/**)` / `Read(//**)` |
+| 追加ディレクトリ | 読み書きを許可するディレクトリ | `permissions.additionalDirectories` |
+| 禁止パス | 読み書き禁止(既定: `~/.ssh` `~/.aws` `~/.gnupg` `~/.config/gh` `~/.netrc` `~/.docker/config.json`) | `permissions.deny`: `Read(...)` `Edit(...)`(+ sandbox の denyRead/denyWrite) |
+| Bash | 都度確認 / サンドボックス内で自動実行 / 禁止 / 常に許可 | `sandbox.enabled` + `autoAllowBashIfSandboxed` / `deny: Bash` / `allow: Bash` |
+| Web | WebFetch / WebSearch の許可 | `permissions.deny: WebFetch, WebSearch` |
+
+- 書き込みは作業ディレクトリと追加ディレクトリに限られます(Claude Code の作業ディレクトリの仕組み)。deny は allow より優先されます
+- `~/.config/ccdeck`(Web UI のトークン)は常に禁止です。「すべて許可」以外では bypassPermissions への切替も無効化します
+- **サンドボックス**は OS レベルで Bash コマンドのファイル書き込み・ネットワークを制限します。`bubblewrap` と `socat` が必要です
+  (install.sh が入れます)。Ubuntu 24.04 以降で AppArmor が非特権ユーザー名前空間を制限している場合は動かないことがあります
+- `claude rc` の場合、モードは rc が起動するセッションに `--permission-mode` で適用され、詳細設定は ccdeck が作成した
+  作業ディレクトリの `.claude/settings.local.json` に書き込まれます(既存ディレクトリではモードのみ)
+- 既定の権限は config.toml の `[defaults.permissions]` で変更できます(例: `mode = "acceptEdits"`)
+- `--cmd` に `--permission-mode` / `--dangerously-skip-permissions` / `--settings` を自分で書いた場合はそちらが優先されます
+- CLI: `ccdeck new NAME --mode acceptEdits --read-scope home --add-dir ~/src/lib --deny-path ~/secret --bash sandbox --no-web`
 
 ### Web UI
 

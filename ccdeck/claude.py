@@ -306,3 +306,36 @@ def _plan_interactive(cmd, mode, cwd, sid, exclude, use_session_id_flag, home):
         nsid = sid if sid and UUID_RE.match(sid) else new_session_id()
         return with_session_id(cmd, nsid), nsid, "new"
     return fresh(cmd), None, "new"
+
+
+def supported_permission_modes(bin="claude"):
+    """Modes listed by `claude --help` (choices: "acceptEdits", ...); None if unknown."""
+    m = re.search(r"--permission-mode <mode>.*?\(choices:([^)]*)\)", claude_help(bin), re.S)
+    return set(re.findall(r'"([A-Za-z]+)"', m.group(1))) if m else None
+
+
+def with_permissions(cmd, mode=None, settings_path=None):
+    """Add `--permission-mode <mode>` / `--settings <file>` unless cmd already sets them.
+
+    interactive claude: both flags;  claude rc / remote-control: --permission-mode only
+    (placed after the subcommand; it applies to the sessions rc spawns)."""
+    try:
+        argv = _split(cmd)
+    except ValueError:
+        return cmd
+    idx = claude_index(argv)
+    if idx is None:
+        return cmd
+    sub = subcommand(cmd)
+    if sub is not None and sub not in REMOTE_CONTROL_SUBCOMMANDS:
+        return cmd
+    extra = []
+    if mode and mode != "default" and not _has_opt(argv, "--permission-mode", "--dangerously-skip-permissions"):
+        extra += ["--permission-mode", mode]
+    if settings_path and sub is None and not _has_opt(argv, "--settings"):
+        extra += ["--settings", settings_path]
+    if not extra:
+        return cmd
+    pos = argv.index(sub, idx + 1) + 1 if sub else idx + 1
+    argv[pos:pos] = extra
+    return shlex.join(argv)

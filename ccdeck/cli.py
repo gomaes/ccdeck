@@ -69,8 +69,19 @@ def _age(sec):
 def cmd_new(args):
     m = _manager()
     ac = {"rate_limit": True} if args.auto_continue else None
+    perm = {}
+    for key in ("mode", "read_scope", "bash"):
+        if getattr(args, key):
+            perm[key] = getattr(args, key)
+    if args.add_dir:
+        perm["extra_dirs"] = args.add_dir
+    if args.deny_path is not None:
+        perm["deny_paths"] = m.default_permissions()["deny_paths"] + args.deny_path
+    if args.no_web:
+        perm["web"] = False
     rec = m.create(args.name, cwd=args.dir, cmd=args.cmd,
-                   auto_restore=False if args.no_auto_restore else None, auto_continue=ac, title=args.title)
+                   auto_restore=False if args.no_auto_restore else None, auto_continue=ac, title=args.title,
+                   permissions_=perm)
     label = rec["name"] if rec["title"] == rec["name"] else "%s (id: %s)" % (rec["title"], rec["name"])
     print("created %s in %s (%s)" % (label, rec["cwd"], rec["cmd"]))
     if args.attach:
@@ -190,8 +201,21 @@ def cmd_kill(args):
         m.stop(args.name)
         print("stopped %s (record kept; `ccdeck resume %s` to start again)" % (args.name, args.name))
     else:
-        m.delete(args.name)
+        rec = m.delete(args.name, keep_dir=args.keep_dir)
         print("killed %s" % args.name)
+        if rec.get("workspace_deleted"):
+            print("deleted working directory %s" % rec["cwd"])
+        elif rec.get("workspace"):
+            print("kept working directory %s (%s)" % (rec["cwd"], rec.get("workspace_note")))
+    return 0
+
+
+def cmd_workspace(args):
+    m = _manager()
+    if args.path:
+        print("workspace root: %s" % m.set_workspace_root(args.path))
+    else:
+        print(m.workspace_root())
     return 0
 
 
@@ -429,12 +453,21 @@ def build_parser():
 
     s = sub.add_parser("new", help="create a session")
     s.add_argument("name")
-    s.add_argument("--dir", "-d", help="working directory (default: config defaults.dir)")
+    s.add_argument("--dir", "-d", help="use this existing directory (default: create <workspace root>/<random>, "
+                                        "deleted together with the session)")
     s.add_argument("--cmd", help='command (default: "claude")')
     s.add_argument("--no-auto-restore", action="store_true", help="do not restore automatically on serve start")
     s.add_argument("--auto-continue", action="store_true", help='send "continue" after a usage-limit reset')
     s.add_argument("--attach", "-a", action="store_true", help="attach right away")
     s.add_argument("--title", help="display name (default: NAME). Any language, e.g. Japanese")
+    g = s.add_argument_group("permissions (default: config [defaults.permissions])")
+    g.add_argument("--mode", choices=["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
+                   help="claude permission mode")
+    g.add_argument("--read-scope", choices=["workdir", "home", "any"], help="where files may be read without asking")
+    g.add_argument("--add-dir", action="append", metavar="PATH", help="extra read/write directory (repeatable)")
+    g.add_argument("--deny-path", action="append", metavar="PATH", help="additional never-readable path (repeatable)")
+    g.add_argument("--bash", choices=["ask", "sandbox", "deny", "allow"], help="how Bash commands run")
+    g.add_argument("--no-web", action="store_true", help="deny WebFetch / WebSearch")
     s.set_defaults(func=cmd_new)
 
     s = sub.add_parser("ls", help="list sessions")
@@ -448,7 +481,12 @@ def build_parser():
     s = sub.add_parser("kill", help="kill a session and forget it")
     s.add_argument("name")
     s.add_argument("--keep", action="store_true", help="keep the record (stop only)")
+    s.add_argument("--keep-dir", action="store_true", help="do not delete the working directory created by ccdeck")
     s.set_defaults(func=cmd_kill)
+
+    s = sub.add_parser("workspace", help="show / set the root for new working directories (default ~/claude)")
+    s.add_argument("path", nargs="?")
+    s.set_defaults(func=cmd_workspace)
 
     s = sub.add_parser("restart", help="restart claude (resuming the conversation)")
     s.add_argument("name")

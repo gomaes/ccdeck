@@ -5,7 +5,7 @@ import pkgutil
 
 from flask import Flask, Response, jsonify, redirect, request
 
-from . import CCDeckError, __version__, validate_name
+from . import CCDeckError, __version__, claude, permissions, validate_name
 from .proxy import COOKIE_NAME, token_ok
 
 PUBLIC = {"/api/health", "/api/login", "/", "/favicon.ico"}
@@ -99,7 +99,12 @@ def create_app(manager, token_getter, cookie_secure=False):
         return jsonify(version=__version__, defaults={
             "cmd": d["cmd"], "dir": d["dir"], "auto_restore": d["auto_restore"],
             "auto_continue_rate_limit": d["auto_continue_rate_limit"],
-            "auto_continue_stall": d["auto_continue_stall"], "continue_text": d["continue_text"]},
+            "auto_continue_stall": d["auto_continue_stall"], "continue_text": d["continue_text"],
+            "permissions": manager.default_permissions()},
+            workspace_root=manager.workspace_root(),
+            permission_modes=list(permissions.MODES),
+            supported_permission_modes=sorted(claude.supported_permission_modes(
+                manager.cfg["claude"].get("bin", "claude")) or []),
             watchdog={"idle_seconds": w["idle_seconds"], "stall_seconds": w["stall_seconds"]})
 
     # -- sessions ------------------------------------------------------------------
@@ -112,7 +117,7 @@ def create_app(manager, token_getter, cookie_secure=False):
         b = body()
         rec = manager.create(str(b.get("name", "")), cwd=b.get("dir") or None, cmd=b.get("cmd") or None,
                              auto_restore=b.get("auto_restore"), auto_continue=b.get("auto_continue"),
-                             title=b.get("title") or None)
+                             title=b.get("title") or None, permissions_=b.get("permissions"))
         return jsonify(session=rec), 201
 
     def one(name):
@@ -130,13 +135,27 @@ def create_app(manager, token_getter, cookie_secure=False):
     def patch(name):
         validate_name(name)
         b = body()
-        manager.set_options(name, auto_restore=b.get("auto_restore"), auto_continue=b.get("auto_continue"))
+        manager.set_options(name, auto_restore=b.get("auto_restore"), auto_continue=b.get("auto_continue"),
+                            permissions_=b.get("permissions"))
         return jsonify(session=one(name))
 
     @app.route("/api/sessions/<name>", methods=["DELETE"])
     def delete(name):
-        manager.delete(validate_name(name))
-        return jsonify(ok=True)
+        rec = manager.delete(validate_name(name), keep_dir=request.args.get("keep_dir") == "1")
+        return jsonify(ok=True, workspace_deleted=rec.get("workspace_deleted"),
+                       workspace_note=rec.get("workspace_note"), cwd=rec.get("cwd"))
+
+    @app.route("/api/settings")
+    def get_settings():
+        return jsonify(workspace_root=manager.workspace_root())
+
+    @app.route("/api/settings", methods=["PUT", "POST"])
+    def put_settings():
+        b = body()
+        out = {}
+        if "workspace_root" in b:
+            out["workspace_root"] = manager.set_workspace_root(str(b["workspace_root"]))
+        return jsonify(**out)
 
     @app.route("/api/sessions/<name>/stop", methods=["POST"])
     def stop(name):

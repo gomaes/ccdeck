@@ -66,7 +66,8 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 # ------------------------------------------------------------------ apt
-PKGS=(tmux ttyd python3 python3-flask)
+# bubblewrap + socat: OS sandbox for Bash commands (per-session "Bash: sandbox" permission)
+PKGS=(tmux ttyd python3 python3-flask bubblewrap socat)
 if [ "$DO_APT" -eq 1 ]; then
   command -v apt-get >/dev/null 2>&1 || die "apt-get not found (Ubuntu 22.04+ / Debian 12+ required). Use --no-apt to skip."
   missing=()

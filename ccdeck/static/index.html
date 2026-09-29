@@ -80,6 +80,15 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
 #logText { background: #000; padding: 8px; border-radius: 6px; max-height: 70vh; overflow: auto; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
   white-space: pre; margin: 0; }
 .err { color: var(--red); min-height: 1.2em; margin-top: 8px; font-size: 13px; }
+.perm { border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px 10px; margin-top: 10px; }
+.perm summary { cursor: pointer; padding: 6px 0; color: var(--text); }
+.perm select, .perm textarea, #newDlg input[type=text], #optDlg input[type=text] { width: 100%; }
+.perm textarea { min-height: 3.2em; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.warnbox { color: var(--orange); font-size: 12px; margin-top: 4px; }
+.radio { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0; color: var(--text); font-size: 14px; }
+.radio input { margin-top: 3px; }
+dialog { max-height: 92vh; overflow-y: auto; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel2);
   border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; z-index: 50; display: none; max-width: 90vw; }
 
@@ -125,12 +134,18 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
     <h2>新規セッション</h2>
     <label for="nName">名前（日本語可・64文字まで。claude rc では claude.ai/code 上の名前にもなります）</label>
     <input type="text" id="nName" maxlength="64" required autocapitalize="off" autocorrect="off">
-    <label for="nDir">作業ディレクトリ</label>
-    <input type="text" id="nDir" autocapitalize="off" autocorrect="off">
+    <label>作業ディレクトリ</label>
+    <label class="radio"><input type="radio" name="nDirMode" value="new" checked>
+      <span>新しく作成: <code id="nRootShow"></code>/<i>ランダム10文字</i><br>
+      <span class="hint">セッション削除時にこのディレクトリも削除されます</span></span></label>
+    <label class="radio"><input type="radio" name="nDirMode" value="existing">
+      <span>既存のディレクトリを使う(削除時も残ります)</span></label>
+    <input type="text" id="nDir" autocapitalize="off" autocorrect="off" placeholder="~/src/project" disabled>
     <label for="nCmd">コマンド</label>
     <input type="text" id="nCmd" autocapitalize="off" autocorrect="off">
     <label class="chk"><input type="checkbox" id="nRestore"> serve 起動時に自動復旧 (auto_restore)</label>
     <label class="chk"><input type="checkbox" id="nRate"> 使用量制限の解除後に自動で "continue" を送信</label>
+    <details class="perm" id="nPerm"><summary>権限(読み書きの範囲など)</summary><div></div></details>
     <div class="err" id="newErr"></div>
     <div class="btns"><button type="button" data-close>キャンセル</button><button class="primary" type="submit">作成</button></div>
   </form>
@@ -144,6 +159,7 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
     <label class="chk"><input type="checkbox" id="oStall"> 無出力が閾値を超えたら自動送信</label>
     <label for="oText">自動送信テキスト</label>
     <input type="text" id="oText">
+    <details class="perm" id="oPerm" open><summary>権限(次の再起動で反映)</summary><div></div></details>
     <div class="err" id="optErr"></div>
     <div class="btns"><button type="button" data-close>キャンセル</button><button class="primary" type="submit">保存</button></div>
   </form>
@@ -162,6 +178,9 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
 <dialog id="menuDlg">
   <h2>メニュー</h2>
   <div style="display:flex;flex-direction:column;gap:8px">
+    <label for="rootIn" style="color:var(--muted);font-size:12px">新規セッションの作業ディレクトリを作る場所</label>
+    <div style="display:flex;gap:6px"><input type="text" id="rootIn" style="flex:1" autocapitalize="off" autocorrect="off"><button id="rootSave">保存</button></div>
+    <div class="hint" id="rootMsg"></div>
     <button id="restoreAllBtn">dead をすべて復旧</button>
     <button id="closeAllBtn">開いているターミナルをすべて閉じる</button>
     <button id="logoutBtn" class="danger">ログアウト</button>
@@ -218,6 +237,46 @@ function shortPath(p) { return p; }
 const titleOf = s => (s && (s.title || s.name)) || "";
 const labelOf = name => titleOf(sessions.find(x => x.name === name)) || name;
 
+async function ensureConfig() {
+  if (!config) config = await api("/api/config");
+  return config;
+}
+
+/* ------------------------------------------------------------------ permissions editor */
+const MODE_LABEL = {
+  default: "都度確認(既定)", acceptEdits: "ファイル編集は自動許可", plan: "計画のみ(変更しない)",
+  dontAsk: "事前に許可したもの以外は自動で拒否", bypassPermissions: "すべて許可(危険)" };
+const READ_LABEL = { workdir: "作業ディレクトリ(+追加ディレクトリ)のみ。外は都度確認",
+  home: "ホームディレクトリ全体を確認なしで読める", any: "どこでも確認なしで読める" };
+const BASH_LABEL = { ask: "都度確認", sandbox: "サンドボックス内で自動実行(要 bubblewrap)",
+  deny: "Bash を使わせない", allow: "常に許可(危険)" };
+const opts = (labels, cur, supported) => Object.entries(labels).map(([v, l]) =>
+  `<option value="${v}" ${v === cur ? "selected" : ""} ${supported && supported.length && v !== "default" && !supported.includes(v) ? "disabled" : ""}>${esc(l)}</option>`).join("");
+
+function renderPerm(box, p) {
+  const sup = config?.supported_permission_modes || [];
+  $("div", box).innerHTML = `
+    <label>モード</label><select data-p="mode">${opts(MODE_LABEL, p.mode, sup)}</select>
+    <div class="warnbox" data-w="bypass" ${p.mode === "bypassPermissions" ? "" : "hidden"}>確認なしで何でも実行します。読み取り禁止パスなどの deny ルールは有効です</div>
+    <label>読み取り範囲</label><select data-p="read_scope">${opts(READ_LABEL, p.read_scope)}</select>
+    <label>追加で読み書きを許可するディレクトリ(1行に1つ)</label>
+    <textarea data-p="extra_dirs" placeholder="~/src/shared">${esc((p.extra_dirs || []).join("\n"))}</textarea>
+    <label>読み書きを禁止するパス(1行に1つ)</label>
+    <textarea data-p="deny_paths">${esc((p.deny_paths || []).join("\n"))}</textarea>
+    <div class="hint">~/.config/ccdeck(トークン)は常に禁止。書き込みは作業ディレクトリと追加ディレクトリのみ</div>
+    <label>Bash コマンド</label><select data-p="bash">${opts(BASH_LABEL, p.bash)}</select>
+    <label class="chk"><input type="checkbox" data-p="web" ${p.web ? "checked" : ""}> Web アクセス (WebFetch / WebSearch) を許可</label>
+    <div class="hint">claude rc の場合: モードは rc が起動するセッションに適用。詳細設定は ccdeck が作成したディレクトリでのみ有効(.claude/settings.local.json)</div>`;
+  $('[data-p="mode"]', box).addEventListener("change", e =>
+    $('[data-w="bypass"]', box).hidden = e.target.value !== "bypassPermissions");
+}
+function readPerm(box) {
+  const v = k => $(`[data-p="${k}"]`, box);
+  const lines = k => v(k).value.split("\n").map(s => s.trim()).filter(Boolean);
+  return { mode: v("mode").value, read_scope: v("read_scope").value, extra_dirs: lines("extra_dirs"),
+           deny_paths: lines("deny_paths"), bash: v("bash").value, web: v("web").checked };
+}
+
 /* ------------------------------------------------------------------ login */
 function showLogin() {
   const d = $("#loginDlg");
@@ -249,6 +308,7 @@ function renderList() {
       <div class="row1"><span class="name" title="id: ${esc(s.name)}">${esc(titleOf(s))}${titleOf(s) !== s.name ? ` <small style="color:var(--muted);font-weight:400">${esc(s.name)}</small>` : ""}</span>
         <span class="badge s-${esc(st)}">${esc(STATE_LABEL[st] || st)}</span></div>
       <div class="meta" title="${esc(s.cwd)}">${esc(fmtAge(s.silent_seconds))}前 · ${esc(shortPath(s.cwd))}</div>
+      ${s.permissions_summary ? `<div class="meta">🔒 ${esc(s.permissions_summary)}</div>` : ""}
       ${warn ? `<div class="warn">${warn}</div>` : ""}
       <div class="acts">
         ${dead ? `<button data-act="resume">復旧</button>` : `<button data-act="stop">停止</button>`}
@@ -287,8 +347,11 @@ $("#list").addEventListener("click", async e => {
       if (nid !== name && openSet.includes(name)) { closePanel(name); openSet = openSet.filter(x => x !== name).concat([nid]); LS.set("open", openSet); }
     }
     else if (act === "delete") {
-      if (!confirm(label + " を削除しますか？（claude プロセスは終了し、記録も消えます）")) return;
-      await api(`/api/sessions/${name}`, { method: "DELETE" }); closePanel(name);
+      const msg = label + " を削除しますか？（claude プロセスは終了し、記録も消えます）" +
+        (s && s.workspace_managed ? "\n\n作業ディレクトリも中身ごと削除されます:\n" + s.cwd : "");
+      if (!confirm(msg)) return;
+      const r = await api(`/api/sessions/${name}`, { method: "DELETE" }); closePanel(name);
+      if (r.workspace_deleted) toast("削除しました(ディレクトリ " + r.cwd + " も削除)");
     }
     await refresh();
   } catch (err) { toast("エラー: " + err.message, 4000); }
@@ -432,25 +495,37 @@ function startPolling(delay = 3000) {
 /* ------------------------------------------------------------------ dialogs */
 document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => b.closest("dialog").close()));
 
-$("#newBtn").addEventListener("click", () => {
+$("#newBtn").addEventListener("click", async () => {
+  await ensureConfig().catch(() => {});
   const d = config?.defaults || {};
   $("#nName").value = ""; $("#nDir").value = d.dir || "~"; $("#nCmd").value = d.cmd || "claude";
   $("#nRestore").checked = d.auto_restore !== false; $("#nRate").checked = !!d.auto_continue_rate_limit;
+  $("#nRootShow").textContent = config?.workspace_root || "~/claude";
+  document.querySelector('input[name="nDirMode"][value="new"]').checked = true; $("#nDir").disabled = true; $("#nDir").value = "";
+  renderPerm($("#nPerm"), d.permissions || {}); $("#nPerm").open = false;
   $("#newErr").textContent = ""; $("#newDlg").showModal(); $("#nName").focus();
 });
 $("#newForm").addEventListener("submit", async e => {
   e.preventDefault();
   const name = $("#nName").value.trim();
   try {
+    const existing = document.querySelector('input[name="nDirMode"]:checked').value === "existing";
+    if (existing && !$("#nDir").value.trim()) throw new Error("既存ディレクトリのパスを入力してください");
     const r = await api("/api/sessions", { method: "POST", body: {
-      name, dir: $("#nDir").value.trim(), cmd: $("#nCmd").value.trim(),
-      auto_restore: $("#nRestore").checked, auto_continue: { rate_limit: $("#nRate").checked } } });
+      name, dir: existing ? $("#nDir").value.trim() : "", cmd: $("#nCmd").value.trim(),
+      auto_restore: $("#nRestore").checked, auto_continue: { rate_limit: $("#nRate").checked },
+      permissions: readPerm($("#nPerm")) } });
     $("#newDlg").close();
     const nid = r.session.name;
     if (!openSet.includes(nid)) { openSet.push(nid); LS.set("open", openSet); }
     await refresh();
   } catch (err) { $("#newErr").textContent = err.message; }
 });
+
+document.querySelectorAll('input[name="nDirMode"]').forEach(r => r.addEventListener("change", () => {
+  const ex = document.querySelector('input[name="nDirMode"]:checked').value === "existing";
+  $("#nDir").disabled = !ex; if (ex) { $("#nDir").value = $("#nDir").value || config?.defaults?.dir || "~"; $("#nDir").focus(); }
+}));
 
 let optName = null;
 function openOpts(s) {
@@ -459,13 +534,15 @@ function openOpts(s) {
   $("#oRate").checked = !!(s.auto_continue && s.auto_continue.rate_limit);
   $("#oStall").checked = !!(s.auto_continue && s.auto_continue.stall);
   $("#oText").value = (s.auto_continue && s.auto_continue.text) || "continue";
+  renderPerm($("#oPerm"), s.permissions || config?.defaults?.permissions || {});
   $("#optErr").textContent = ""; $("#optDlg").showModal();
 }
 $("#optForm").addEventListener("submit", async e => {
   e.preventDefault();
   try {
     await api(`/api/sessions/${optName}`, { method: "PATCH", body: { auto_restore: $("#oRestore").checked,
-      auto_continue: { rate_limit: $("#oRate").checked, stall: $("#oStall").checked, text: $("#oText").value } } });
+      auto_continue: { rate_limit: $("#oRate").checked, stall: $("#oStall").checked, text: $("#oText").value },
+      permissions: readPerm($("#oPerm")) } });
     $("#optDlg").close(); await refresh();
   } catch (err) { $("#optErr").textContent = err.message; }
 });
@@ -483,7 +560,18 @@ $("#logReload").addEventListener("click", loadLog);
 $("#logLines").addEventListener("change", loadLog);
 $("#logBottom").addEventListener("click", () => { const p = $("#logText"); p.scrollTop = p.scrollHeight; });
 
-$("#menuBtn").addEventListener("click", () => $("#menuDlg").showModal());
+$("#menuBtn").addEventListener("click", async () => {
+  await ensureConfig().catch(() => {});
+  $("#rootIn").value = config?.workspace_root || ""; $("#rootMsg").textContent = ""; $("#menuDlg").showModal();
+});
+$("#rootSave").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/settings", { method: "PUT", body: { workspace_root: $("#rootIn").value.trim() } });
+    await ensureConfig();
+    config.workspace_root = r.workspace_root; $("#rootIn").value = r.workspace_root;
+    $("#rootMsg").textContent = "保存しました: " + r.workspace_root;
+  } catch (err) { $("#rootMsg").textContent = "エラー: " + err.message; }
+});
 $("#restoreAllBtn").addEventListener("click", async () => {
   try { const d = await api("/api/restore-all", { method: "POST", body: {} }); toast("復旧: " + (d.restored.join(", ") || "なし")); $("#menuDlg").close(); refresh(); }
   catch (err) { toast("エラー: " + err.message, 4000); }

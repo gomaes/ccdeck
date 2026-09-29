@@ -9,7 +9,7 @@ import time
 import re
 import secrets
 
-from . import NAME_RE, CCDeckError, claude, detect, procs, validate_name, validate_title
+from . import NAME_RE, CCDeckError, claude, detect, permissions, procs, validate_name, validate_title, workspace
 from .config import Paths, ensure_files, load_config
 from .store import Store, new_record
 from .tmux import ALLOWED_KEYS, Tmux
@@ -159,6 +159,7 @@ class Manager:
         env = {"CCDECK_SESSION": name}
         cbin = claude.find_bin(self.cfg["claude"].get("bin", "claude"),
                                claude.env_file_path(self.paths.env_file))
+        command = self._apply_permissions(rec, command)
         argv = self._shell_argv(claude.absolutize(command, cbin))
         self._check_remote_control_free(rec, command)
         if self.tmux.has_session(name):
@@ -178,9 +179,47 @@ class Manager:
         return self.store.update(name, **fields)
 
     # -- operations ----------------------------------------------------------------
-    def create(self, name, cwd=None, cmd=None, auto_restore=None, auto_continue=None, title=None):
+    # -- workspace / permissions -------------------------------------------------------
+    def workspace_root(self):
+        return workspace.get_root(self.paths, self.cfg)
+
+    def set_workspace_root(self, root):
+        return workspace.set_root(self.paths, root)
+
+    def default_permissions(self):
+        return permissions.normalize(self.cfg["defaults"].get("permissions") or {})
+
+    def _perm_settings_path(self, name):
+        return os.path.join(self.paths.data_dir, "permissions", "%s.json" % name)
+
+    def _apply_permissions(self, rec, command):
+        """Generate the settings for rec's permission profile and add the flags to command."""
+        if "permissions" not in rec or not claude.is_claude_cmd(command):
+            return command
+        perm = permissions.normalize(rec["permissions"])
+        cbin = self.cfg["claude"].get("bin", "claude")
+        supported = claude.supported_permission_modes(cbin)
+        if perm["mode"] != "default" and supported is not None and perm["mode"] not in supported:
+            raise CCDeckError("this claude does not support permission mode %s (supported: %s)"
+                              % (perm["mode"], ", ".join(sorted(supported))))
+        sub = claude.subcommand(command)
+        if sub is None:
+            path = permissions.write_settings(self._perm_settings_path(rec["name"]), perm)
+            return claude.with_permissions(command, perm["mode"], path)
+        if sub in claude.REMOTE_CONTROL_SUBCOMMANDS:
+            # sessions spawned by `claude rc` read the folder's project settings
+            if rec.get("workspace") and workspace.removable(rec) in (None, "used by another session"):
+                permissions.write_settings(os.path.join(rec["cwd"], ".claude", "settings.local.json"), perm)
+            return claude.with_permissions(command, perm["mode"], None)
+        return command
+
+    def create(self, name, cwd=None, cmd=None, auto_restore=None, auto_continue=None, title=None,
+               permissions_=None):
         """`name` may be any display name (e.g. Japanese). If it is not a valid tmux/URL id
-        (^[a-zA-Z0-9_-]{1,32}$), it becomes the title and an ASCII id is generated."""
+        (^[a-zA-Z0-9_-]{1,32}$), it becomes the title and an ASCII id is generated.
+
+        cwd=None creates a fresh working directory <workspace_root>/<random> that is deleted
+        together with the session; otherwise cwd must be an existing directory."""
         if isinstance(name, str) and NAME_RE.match(name):
             title = validate_title(title) if title else name
         else:
@@ -190,27 +229,43 @@ class Manager:
         if self.store.get(name):
             raise CCDeckError("session already exists: %s" % name, 409)
         d = self.cfg["defaults"]
-        cwd = self.resolve_dir(cwd or d["dir"])
         cmd = (cmd or d["cmd"]).strip()
         if not cmd:
             raise CCDeckError("empty command")
         if self.tmux.has_session(name):
             raise CCDeckError("a tmux session named %s already exists" % name, 409)
+        perm = permissions.normalize(permissions_, self.default_permissions())
+        ws = None
+        if cwd:
+            cwd = self.resolve_dir(cwd)
+        else:
+            ws = workspace.create(self.workspace_root())
+            cwd = ws["path"]
         ac = {"rate_limit": bool(d.get("auto_continue_rate_limit")), "stall": bool(d.get("auto_continue_stall")),
               "text": d.get("continue_text") or "continue"}
         ac.update({k: v for k, v in (auto_continue or {}).items() if k in ac})
         rec = new_record(name, cwd, cmd, d["auto_restore"] if auto_restore is None else auto_restore, ac)
         rec["title"] = title
-        command, sid, _ = claude.plan_launch(cmd, mode="new", cwd=cwd, use_session_id_flag=self._use_sid_flag(),
-                                             title=title if self._launch_title() else None)
-        rec["claude_session_id"] = sid
-        self.store.add(rec)
+        rec["permissions"] = perm
+        if ws:
+            rec["workspace"] = ws
+        try:
+            command, sid, _ = claude.plan_launch(cmd, mode="new", cwd=cwd, use_session_id_flag=self._use_sid_flag(),
+                                                 title=title if self._launch_title() else None)
+            rec["claude_session_id"] = sid
+            self.store.add(rec)
+        except Exception:
+            if ws:
+                workspace.remove(rec)
+            raise
         try:
             self._launch(rec, command)
         except Exception:
             self.store.delete(name)
+            if ws:
+                workspace.remove(rec)
             raise
-        return rec
+        return self.store.get(name) or rec
 
     def resume(self, name, force=False):
         """Recover a dead session in the same cwd, resuming the claude conversation."""
@@ -247,7 +302,9 @@ class Manager:
             self.runtime.get(name, {}).pop("status", None)
         return self._update(name, stopped=True, state="dead")
 
-    def delete(self, name):
+    def delete(self, name, keep_dir=False):
+        """Kill the session and forget it. Its working directory is deleted as well when
+        ccdeck created it (see workspace.removable for the safety checks)."""
         validate_name(name)
         snap = self._shutdown_pane(name)
         self.tmux.kill_session(name)
@@ -257,6 +314,15 @@ class Manager:
             self.runtime.pop(name, None)
         if rec is None:
             raise CCDeckError("no such session: %s" % name, 404)
+        try:
+            os.unlink(self._perm_settings_path(name))
+        except OSError:
+            pass
+        rec = dict(rec)
+        if keep_dir:
+            rec["workspace_deleted"], rec["workspace_note"] = False, "kept"
+        else:
+            rec["workspace_deleted"], rec["workspace_note"] = workspace.remove(rec, self.store.all())
         return rec
 
     def rename(self, old, new):
@@ -285,9 +351,13 @@ class Manager:
                 self.runtime[new] = self.runtime.pop(old)
         return rec
 
-    def set_options(self, name, auto_restore=None, auto_continue=None):
+    def set_options(self, name, auto_restore=None, auto_continue=None, permissions_=None):
+        """Permission changes take effect on the next (re)start of claude."""
         rec = self.store.require(name)
         fields = {}
+        if permissions_ is not None:
+            fields["permissions"] = permissions.normalize(permissions_, rec.get("permissions") or
+                                                          self.default_permissions())
         if auto_restore is not None:
             fields["auto_restore"] = bool(auto_restore)
         if auto_continue is not None:
@@ -374,6 +444,9 @@ class Manager:
         last_change = runtime.get("last_change") or rec.get("last_output_at")
         d = dict(rec)
         d.setdefault("title", rec["name"])
+        d["workspace_managed"] = bool(rec.get("workspace"))
+        if rec.get("permissions"):
+            d["permissions_summary"] = permissions.summary(permissions.normalize(rec["permissions"]))
         d.update(
             state=st.state,
             state_reason=st.reason,

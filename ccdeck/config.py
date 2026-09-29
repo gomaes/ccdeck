@@ -48,6 +48,9 @@ DEFAULTS = {
     "defaults": {
         "cmd": "claude",
         "dir": "~",
+        # new sessions without an explicit directory get <workspace_root>/<random>
+        # (changeable from the web UI; stored in <data>/settings.json)
+        "workspace_root": "~/claude",
         "auto_restore": True,
         "auto_continue_rate_limit": False,
         "auto_continue_stall": False,

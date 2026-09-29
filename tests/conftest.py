@@ -50,7 +50,8 @@ def env(tmp_path, monkeypatch):
         [defaults]
         cmd = "%s"
         dir = "%s"
-    ''' % (fake, fake, tmp_path)))
+        workspace_root = "%s"
+    ''' % (fake, fake, tmp_path, tmp_path / "ws")))
     monkeypatch.setenv("CCDECK_CONFIG_DIR", str(cfg))
     monkeypatch.setenv("CCDECK_DATA_DIR", str(data))
     monkeypatch.setenv("CCDECK_TMUX_SOCKET", "ccdeck-test-" + uuid.uuid4().hex[:8])

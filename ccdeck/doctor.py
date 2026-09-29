@@ -130,6 +130,21 @@ def run_checks(manager):
             add(FAIL, "remote-control duplicates", "%s is served by %d processes (%s): claude rc will fail"
                 % (cwd, len(ps), ", ".join(str(p.pid) for p in ps)))
 
+    uses_sandbox = [r["name"] for r in manager.store.all() if (r.get("permissions") or {}).get("bash") == "sandbox"]
+    if shutil.which("bwrap") and shutil.which("socat"):
+        add(OK, "sandbox (bubblewrap/socat)", "available")
+    else:
+        add(FAIL if uses_sandbox else WARN, "sandbox (bubblewrap/socat)",
+            "missing: sudo apt install bubblewrap socat" +
+            (" (used by: %s)" % ", ".join(uses_sandbox) if uses_sandbox else " (needed for 'Bash: sandbox')"))
+    try:
+        ws_root = manager.workspace_root()
+        wr = os.path.realpath(os.path.expanduser(ws_root))
+        add(OK if os.path.isdir(wr) or not os.path.exists(wr) else FAIL, "workspace root", wr +
+            ("" if os.path.isdir(wr) else " (created on first session)"))
+    except Exception as e:
+        add(WARN, "workspace root", str(e))
+
     proj = os.path.join(claude.claude_home(), "projects")
     add(OK if os.path.isdir(proj) else WARN, "claude projects dir", proj)
 

@@ -44,6 +44,9 @@ ccdeck/                 Python パッケージ (stdlib + Flask のみ)
   ttyd.py               ttyd プロセスの起動・監視
   proxy.py              フロントプロキシ (認証 + HTTP/WebSocket 中継)
   web.py                Flask アプリ (REST API)
+  workspace.py          セッションごとの作業ディレクトリ (<root>/<ランダム10文字>) の作成・安全な削除
+  permissions.py        権限プロファイル → Claude Code settings (--settings / --permission-mode)
+  procs.py              /proc からのプロセスツリー・remote-control プロセス検出
   doctor.py             環境診断
   static/index.html     Web UI (単一 HTML + バニラ JS)
 tests/                  pytest (単体 + tmux 統合テスト)
@@ -114,10 +117,11 @@ claude 以外のコマンド(`--cmd "htop"` 等)は元コマンドをそのま�
 | POST | `/api/login` / `/api/logout` | `{token}` → Cookie 設定 / 削除 |
 | GET | `/api/config` | 既定値 (cmd, dir) など |
 | GET | `/api/sessions` | 一覧 (状態, 経過秒, cwd, rate limit 解除時刻 …) |
-| POST | `/api/sessions` | 作成 `{name, dir, cmd, auto_restore, auto_continue}` |
+| POST | `/api/sessions` | 作成 `{name, dir, cmd, auto_restore, auto_continue, permissions}`(dir 省略時は `<root>/<ランダム>` を作成) |
 | GET | `/api/sessions/<name>` | 詳細 |
-| PATCH | `/api/sessions/<name>` | 設定変更 `{auto_restore, auto_continue:{rate_limit, stall, text}}` |
-| DELETE | `/api/sessions/<name>` | 停止して記録削除 |
+| PATCH | `/api/sessions/<name>` | 設定変更 `{auto_restore, auto_continue:{rate_limit, stall, text}, permissions}` |
+| DELETE | `/api/sessions/<name>?keep_dir=1` | 停止して記録削除(ccdeck が作った作業ディレクトリも削除) |
+| GET/PUT | `/api/settings` | `{workspace_root}` 作業ディレクトリのルート |
 | POST | `/api/sessions/<name>/stop` | 停止 (記録は残す) |
 | POST | `/api/sessions/<name>/restart` | 再起動 `{fresh:false}` (既定は会話を resume) |
 | POST | `/api/sessions/<name>/resume` | 復旧 (dead のときのみ) |
