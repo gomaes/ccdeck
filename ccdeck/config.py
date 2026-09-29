@@ -46,7 +46,8 @@ DEFAULTS = {
         "shell_flags": ["-lc"],
     },
     "defaults": {
-        "cmd": "claude",
+        # default command for new sessions: a Remote Control server, reachable from claude.ai/code
+        "cmd": "claude rc",
         "dir": "~",
         # new sessions without an explicit directory get <workspace_root>/<random>
         # (changeable from the web UI; stored in <data>/settings.json)
@@ -106,7 +107,8 @@ name_sessions = true
 shell_flags = ["-lc"]
 
 [defaults]
-cmd = "claude"
+# default command for new sessions ("claude rc": usable from claude.ai/code and the Claude app too)
+cmd = "claude rc"
 dir = "~"
 auto_restore = true
 auto_continue_rate_limit = false
@@ -318,6 +320,8 @@ def ensure_files(paths):
         if LEGACY_BIND_COMMENT in text and re.search(r'(?m)^bind\s*=\s*"127\.0\.0\.1"', text):
             set_server_bind(paths, "0.0.0.0")
             created.append(paths.config_file + " (bind -> 0.0.0.0)")
+        if _migrate_default_cmd(paths):
+            created.append(paths.config_file + ' (defaults.cmd -> "claude rc")')
     cfg = load_config(paths)
     if not os.path.exists(paths.tmux_conf):
         with open(paths.tmux_conf, "w", encoding="utf-8") as f:
@@ -325,6 +329,37 @@ def ensure_files(paths):
                                               history_limit=int(cfg["tmux"]["history_limit"])))
         created.append(paths.tmux_conf)
     return created
+
+
+def _migrate_default_cmd(paths):
+    """Once: the generated `cmd = "claude"` in [defaults] becomes "claude rc" (new default).
+
+    Recorded in <data>/settings.json so a later deliberate change back is respected."""
+    from . import workspace
+
+    st = workspace.load_settings(paths)
+    if st.get("migrated_default_cmd_rc"):
+        return False
+    with open(paths.config_file, encoding="utf-8") as f:
+        text = f.read()
+    lines, in_defaults, changed = text.splitlines(keepends=True), False, False
+    for i, ln in enumerate(lines):
+        m = _TABLE_RE.match(ln)
+        if m:
+            in_defaults = m.group(1) == "defaults"
+            continue
+        if in_defaults and re.match(r'^cmd\s*=\s*"claude"\s*$', ln):
+            lines[i] = 'cmd = "claude rc"\n'
+            changed = True
+            break
+    if changed:
+        _write_private(paths.config_file, "".join(lines))
+    st["migrated_default_cmd_rc"] = True
+    try:
+        workspace.save_settings(paths, st)
+    except OSError:
+        pass
+    return changed
 
 
 LEGACY_BIND_COMMENT = "# Listen address. Keep 127.0.0.1 and use Tailscale / SSH port-forwarding for remote access."

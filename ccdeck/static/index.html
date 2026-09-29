@@ -34,7 +34,7 @@ header .spacer { flex: 1; }
 
 #layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); height: calc(100% - 49px); }
 #side { border-right: 1px solid var(--border); overflow-y: auto; padding: 8px; }
-#main { overflow: auto; padding: 8px; }
+#main { overflow: hidden; padding: 8px; display: flex; flex-direction: column; min-height: 0; }
 
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px;
   margin-bottom: 8px; cursor: pointer; }
@@ -50,9 +50,13 @@ header .spacer { flex: 1; }
 .s-running { color: var(--green); } .s-idle { color: var(--muted); } .s-waiting-input { color: var(--yellow); }
 .s-rate-limited { color: var(--purple); } .s-dead { color: var(--red); }
 
-#grid { display: grid; gap: 8px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
+/* every open terminal fits in the viewport: rows share the available height */
+#grid { display: grid; gap: 8px; flex: 1; min-height: 0;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows, 1), minmax(0, 1fr)); }
+#grid:empty { display: none; }
 .term { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); display: flex;
-  flex-direction: column; min-height: 0; height: var(--term-h, 70vh); }
+  flex-direction: column; min-height: 0; min-width: 0; }
 .term.max { position: fixed; inset: 0; z-index: 20; height: 100% !important; border-radius: 0; }
 .term .bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .term .bar .title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -95,8 +99,8 @@ dialog { max-height: 92vh; overflow-y: auto; }
 @media (max-width: 800px) {
   #layout { display: block; height: auto; }
   #side { border-right: 0; border-bottom: 1px solid var(--border); max-height: none; }
-  #grid { grid-template-columns: minmax(0, 1fr) !important; }
-  #main { overflow: visible; }
+  #grid { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
+  #main { overflow: visible; display: block; }
   .term { height: 75vh; }
   #colsSel { display: none; }
   body.focus #side { display: none; }
@@ -202,7 +206,10 @@ const LS = {
 const STATE_LABEL = { "running": "running", "idle": "idle", "waiting-input": "waiting-input", "rate-limited": "rate-limited", "dead": "dead" };
 let sessions = [];
 let config = null;
-let openSet = LS.get("open", []);
+// at most MAX_OPEN terminals are shown; opening another closes the one opened first
+// (only the browser tab/panel is closed - the session keeps running)
+const MAX_OPEN = 4;
+let openSet = LS.get("open", []).slice(-MAX_OPEN);
 const panels = new Map();       // name -> panel object
 let pollTimer = null, pollFails = 0;
 
@@ -358,9 +365,18 @@ $("#list").addEventListener("click", async e => {
 });
 
 /* ------------------------------------------------------------------ terminals */
+function addOpen(name) {
+  if (openSet.includes(name)) return;
+  const closed = [];
+  while (openSet.length >= MAX_OPEN) { const old = openSet.shift(); closePanel(old); closed.push(labelOf(old)); }
+  openSet.push(name);
+  LS.set("open", openSet);
+  if (closed.length) toast("表示は最大" + MAX_OPEN + "つまで: " + closed.join(", ") + " を閉じました(セッションは動作中)", 3500);
+}
+
 function toggleOpen(name) {
   if (openSet.includes(name)) { openSet = openSet.filter(x => x !== name); closePanel(name); }
-  else { openSet.push(name); }
+  else { addOpen(name); }
   LS.set("open", openSet);
   syncPanels(); renderList();
   if (window.matchMedia("(max-width: 800px)").matches && openSet.includes(name)) panels.get(name)?.el.scrollIntoView({ behavior: "smooth" });
@@ -517,7 +533,7 @@ $("#newForm").addEventListener("submit", async e => {
       permissions: readPerm($("#nPerm")) } });
     $("#newDlg").close();
     const nid = r.session.name;
-    if (!openSet.includes(nid)) { openSet.push(nid); LS.set("open", openSet); }
+    addOpen(nid);
     await refresh();
   } catch (err) { $("#newErr").textContent = err.message; }
 });
@@ -582,8 +598,10 @@ $("#logoutBtn").addEventListener("click", async () => { await api("/api/logout",
 const colsSel = $("#colsSel");
 colsSel.value = String(LS.get("cols", 2));
 function applyCols() {
-  const c = +colsSel.value; $("#grid").style.setProperty("--cols", Math.max(1, Math.min(c, panels.size)));
-  $("#grid").style.setProperty("--term-h", c <= 2 ? "calc(100vh - 80px)" : "calc(50vh - 50px)");
+  const c = +colsSel.value, n = panels.size;
+  const cols = Math.max(1, Math.min(c, n));
+  $("#grid").style.setProperty("--cols", cols);
+  $("#grid").style.setProperty("--rows", Math.max(1, Math.ceil(n / cols)));
   LS.set("cols", c);
 }
 colsSel.addEventListener("change", applyCols);

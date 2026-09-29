@@ -182,3 +182,20 @@ def test_set_server_bind(tmp_path):
     assert load_config(p)["server"]["bind"] == "127.0.0.1"
     with pytest.raises(ValueError):
         set_server_bind(p, '0.0.0.0"\nx = "')
+
+
+def test_default_cmd_migrates_once_to_claude_rc(tmp_path):
+    p = _paths(tmp_path)
+    open(p.config_file, "w").write('[server]\ntoken = "tok-0123456789abcdef0123"\n\n[defaults]\ncmd = "claude"\ndir = "~"\n')
+    ensure_files(p)
+    assert load_config(p)["defaults"]["cmd"] == "claude rc"
+    # the user deliberately goes back to plain claude: not migrated again
+    open(p.config_file, "w").write('[server]\ntoken = "tok-0123456789abcdef0123"\n\n[defaults]\ncmd = "claude"\n')
+    ensure_files(p)
+    assert load_config(p)["defaults"]["cmd"] == "claude"
+
+
+def test_new_config_defaults_to_claude_rc(tmp_path):
+    p = Paths({"CCDECK_CONFIG_DIR": str(tmp_path / "c"), "CCDECK_DATA_DIR": str(tmp_path / "d")})
+    ensure_files(p)
+    assert load_config(p)["defaults"]["cmd"] == "claude rc"

@@ -122,9 +122,19 @@ Claude Code の設定ファイル (`--settings`) とフラグに変換して渡�
 - `--cmd` に `--permission-mode` / `--dangerously-skip-permissions` / `--settings` を自分で書いた場合はそちらが優先されます
 - CLI: `ccdeck new NAME --mode acceptEdits --read-scope home --add-dir ~/src/lib --deny-path ~/secret --bash sandbox --no-web`
 
+### 既定のコマンドは `claude rc`
+
+- 新規セッションは既定で `claude rc`(Remote Control)として起動し、ccdeck の Web UI に加えて claude.ai/code や
+  Claude アプリからも操作できます。対話型の claude にしたい場合は新規作成画面のコマンドを `claude` に変えるか、
+  config.toml の `[defaults] cmd` を変更してください
+- 以前のインストールで生成された config.toml の `cmd = "claude"` は、一度だけ自動で `claude rc` に更新されます
+  (その後 `claude` に戻した場合はそのまま尊重されます)
+
 ### Web UI
 
-- 左: セッション一覧。カードをタップするとターミナル(ttyd)が開きます。複数開くとグリッド表示(列数は右上で切替)
+- 左: セッション一覧。カードをタップするとターミナル(ttyd)が開きます。複数開くとグリッド表示(列数は右上で切替)。
+  開いているターミナルは画面の高さに収まるよう自動で分割され、**最大 4 つ**まで表示します。5 つ目を開くと最初に開いたものが閉じます
+  (閉じるのは表示だけで、セッションは動き続けます)
 - 各ターミナルの下に **Enter / Esc / Ctrl+C / continue / y / n / 1 / 2 / ↑ / ↓ / Tab / ⇧Tab** ボタンとテキスト送信欄
   (スマホのソフトキーボードで打ちにくいキーを `tmux send-keys` 経由で送ります)
 - 復旧 / 停止 / 再起動 / ログ / 設定(自動 continue) / 名前変更 / 削除
@@ -189,7 +199,7 @@ token = "..."           # Bearer / Cookie 用トークン
 cookie_secure = false   # HTTPS 経由 (tailscale serve 等) で使うなら true
 
 [defaults]
-cmd = "claude"          # 例: "claude --dangerously-skip-permissions"
+cmd = "claude rc"       # 既定。対話の claude にするなら "claude"(例: "claude --model opus")
 dir = "~"
 
 [watchdog]
