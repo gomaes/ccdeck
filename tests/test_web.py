@@ -113,7 +113,8 @@ def test_ensure_files_creates_private_config_with_token(tmp_path):
     p = Paths({"CCDECK_CONFIG_DIR": str(tmp_path / "c"), "CCDECK_DATA_DIR": str(tmp_path / "d")})
     ensure_files(p)
     cfg = load_config(p)
-    assert len(cfg["server"]["token"]) >= 32 and cfg["server"]["bind"] == "127.0.0.1"
+    assert len(cfg["server"]["token"]) >= 32 and cfg["server"]["bind"] == "0.0.0.0"
+    assert cfg["server"]["allow_external"] is True
     import os
     import stat
     assert stat.S_IMODE(os.stat(p.config_file).st_mode) == 0o600

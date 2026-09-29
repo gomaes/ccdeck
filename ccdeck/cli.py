@@ -231,13 +231,24 @@ def cmd_url(args):
     paths = Paths()
     ensure_files(paths)
     s = load_config(paths)["server"]
-    host = s["bind"]
-    if host in ("0.0.0.0", "::"):
-        host = socket.gethostname()
-    if ":" in host:
-        host = "[%s]" % host
-    print("http://%s:%d/?token=%s" % (host, int(s["port"]), s["token"]))
+    for host in _url_hosts(s["bind"]):
+        if ":" in host:
+            host = "[%s]" % host
+        print("http://%s:%d/?token=%s" % (host, int(s["port"]), s["token"]))
     return 0
+
+
+def _url_hosts(bind):
+    if bind not in ("0.0.0.0", "::"):
+        return [bind]
+    hosts = []
+    try:
+        out = subprocess.run(["hostname", "-I"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, timeout=5).stdout.split()
+        hosts = [h for h in out if ":" not in h]  # IPv4 only, keeps the list short
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ["127.0.0.1"] + (hosts or [socket.gethostname()])
 
 
 def cmd_serve(args):

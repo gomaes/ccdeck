@@ -150,6 +150,8 @@ echo
 "$TARGET" doctor || true
 echo
 info "done."
-echo "  Web UI : $("$TARGET" url | sed 's/?token=.*/  (login URL with token: ccdeck url)/')"
+echo "  Web UI : (login URLs with token: ccdeck url)"
+"$TARGET" url | sed 's/?token=.*//; s/^/           /'
 echo "  CLI    : ccdeck new myproj --dir ~/src/myproj && ccdeck ls"
-echo "  Remote : keep bind=127.0.0.1 and use Tailscale or 'ssh -L 8787:127.0.0.1:8787 host' (see README)"
+echo "  Note   : the web UI listens on 0.0.0.0:8787 (all interfaces). Restrict it with a firewall or"
+echo "           set bind = \"127.0.0.1\" in ~/.config/ccdeck/config.toml (see README)"

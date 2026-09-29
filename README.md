@@ -39,7 +39,7 @@ git clone <this repo> ccdeck && cd ccdeck
 インストール後:
 
 ```bash
-ccdeck url          # トークン付きのログイン URL を表示 (http://127.0.0.1:8787/?token=...)
+ccdeck url          # トークン付きのログイン URL を表示 (http://<このマシンのIP>:8787/?token=...)
 ccdeck doctor       # 環境診断
 ```
 
@@ -117,9 +117,9 @@ ccdeck serve                                    # Web UI + watchdog (通常は s
 
 ```toml
 [server]
-bind = "127.0.0.1"      # 既定はローカルのみ
+bind = "0.0.0.0"        # 既定は全インターフェース (LAN / Tailscale から直接アクセス可)
 port = 8787
-allow_external = false  # 127.0.0.1 以外に bind するには true が必要
+allow_external = true   # 127.0.0.1 以外に bind するには true が必要 (安全スイッチ)
 token = "..."           # Bearer / Cookie 用トークン
 cookie_secure = false   # HTTPS 経由 (tailscale serve 等) で使うなら true
 
@@ -139,7 +139,13 @@ auto_restore_dead = false
 
 ccdeck の Web UI は **あなたのユーザー権限で任意のコマンドを実行できる端末そのもの** です。取り扱いに注意してください。
 
-- 既定は `127.0.0.1` のみで待ち受けます。外部インターフェースに bind するには `allow_external = true` の明示が必要です
+- Web UI は既定で **`0.0.0.0:8787`(全インターフェース)** で待ち受けます。同じネットワーク上の誰でも
+  ログイン画面には到達できるため、トークンの管理に注意し、必要に応じてファイアウォールで制限してください
+  (例: `sudo ufw allow from 192.168.1.0/24 to any port 8787` / `sudo ufw allow in on tailscale0 to any port 8787`)
+- ローカルのみにしたい場合は `bind = "127.0.0.1"` に変更してください。127.0.0.1 以外に bind する場合は
+  `allow_external = true` が必要です(既定で true。false にすると外部 bind を拒否します)
+- 通信は平文 HTTP です。信頼できないネットワーク(公衆 Wi-Fi・インターネット直結)ではトークンが盗聴され得るため、
+  Tailscale(WireGuard で暗号化)や SSH ポートフォワード経由で使うか、`tailscale serve` 等で HTTPS 化してください
 - すべての API・端末アクセスはトークン(`Authorization: Bearer` または HttpOnly / SameSite=Strict Cookie)で保護され、
   Cookie 認証の変更系リクエストには `X-CCDeck: 1` ヘッダを必須にして CSRF を防いでいます
 - ttyd は `127.0.0.1` でのみ待ち受け、ccdeck のフロントプロキシがトークンを検証してから WebSocket を含めて中継します
@@ -154,10 +160,11 @@ ccdeck の Web UI は **あなたのユーザー権限で任意のコマンド�
 
 ### リモート(スマホ等)からアクセスする場合
 
-ポートをインターネットに直接公開しないでください。推奨:
+同じ LAN / tailnet 内なら `http://<マシンのIP>:8787/` で直接アクセスできます(`ccdeck url` が候補を表示)。
+ポートをインターネットに直接公開(ルーターのポート開放など)はしないでください。推奨:
 
-- **Tailscale**: `bind` は `127.0.0.1` のまま、`tailscale serve --bg 8787` で tailnet 内に HTTPS 公開
-  (この場合 `cookie_secure = true` を推奨)。または `bind = "<tailscale IP>"` + `allow_external = true`
+- **Tailscale**: tailnet 内から `http://<tailscale IP>:8787/`。HTTPS にしたい場合は `bind = "127.0.0.1"` にして
+  `tailscale serve --bg 8787`(この場合 `cookie_secure = true` を推奨)
 - **SSH ポートフォワード**: `ssh -N -L 8787:127.0.0.1:8787 user@host` → 手元のブラウザで `http://127.0.0.1:8787/`
 
 ## トラブルシューティング

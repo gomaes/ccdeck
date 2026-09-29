@@ -7,7 +7,7 @@
    │  HTTP + WebSocket   (Cookie / Bearer トークン)
    ▼
 ┌──────────────────────── ccdeck serve (systemd --user) ─────────────────────────┐
-│ front proxy (stdlib socketserver, bind=127.0.0.1:8787)                         │
+│ front proxy (stdlib socketserver, bind=0.0.0.0:8787)                           │
 │   ├─ /tty/*  … トークン検証 → ttyd へ生 TCP 中継 (WebSocket 含む)               │
 │   │            + ttyd の Basic 認証ヘッダを付与、index.html に再接続フックを注入 │
 │   └─ その他  … 内部 Flask (127.0.0.1:ランダムポート) へ中継                     │

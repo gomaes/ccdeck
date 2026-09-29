@@ -8,10 +8,10 @@ import secrets
 
 DEFAULTS = {
     "server": {
-        "bind": "127.0.0.1",
+        "bind": "0.0.0.0",
         "port": 8787,
         # Binding to anything other than a loopback address requires this to be true.
-        "allow_external": False,
+        "allow_external": True,
         "token": "",
         "cookie_secure": False,
     },
@@ -65,11 +65,12 @@ CONFIG_TEMPLATE = """\
 # Changes take effect after `systemctl --user restart ccdeck`.
 
 [server]
-# Listen address. Keep 127.0.0.1 and use Tailscale / SSH port-forwarding for remote access.
-bind = "127.0.0.1"
+# Listen address. "0.0.0.0" = all interfaces (LAN / Tailscale). Use "127.0.0.1" for local only.
+# ttyd itself always listens on 127.0.0.1 and is reachable only through the token-checking proxy.
+bind = "0.0.0.0"
 port = 8787
-# Must be true to bind to a non-loopback address (e.g. "0.0.0.0" or a Tailscale IP).
-allow_external = false
+# Must be true to bind to a non-loopback address (safety switch).
+allow_external = true
 # Access token (Bearer header or cookie). Keep this file private (chmod 600).
 token = "{token}"
 # Set true when served through HTTPS (e.g. `tailscale serve`).
