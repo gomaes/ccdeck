@@ -96,8 +96,9 @@ def run_checks(manager):
 
     # claude
     cbin = cfg["claude"]["bin"]
-    path = shutil.which(cbin)
+    path = claude.find_bin(cbin, claude.env_file_path(paths.env_file))
     if path:
+        cbin = path
         rc, out = _run([cbin, "--version"], timeout=20)
         add(OK, "claude", "%s (%s)" % (out.splitlines()[0] if out else "?", path))
         add(OK if claude.supports_session_id_flag(cbin) else WARN, "claude --session-id",

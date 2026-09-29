@@ -5,7 +5,7 @@
 #   - create ~/.config/ccdeck/{config.toml,tmux.conf,env} and the systemd --user unit
 #   - enable linger + start the service
 #
-# Usage: ./install.sh [--no-apt] [--no-service] [--no-linger] [--keep-system-ttyd] [--uninstall]
+# Usage: ./install.sh [--bind ADDR] [--no-apt] [--no-service] [--no-linger] [--keep-system-ttyd] [--uninstall]
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,16 +18,20 @@ DO_SERVICE=1
 DO_LINGER=1
 KEEP_SYSTEM_TTYD=0
 UNINSTALL=0
-for arg in "$@"; do
-  case "$arg" in
+BIND=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bind) [ $# -ge 2 ] || { echo "--bind needs an address" >&2; exit 2; }; BIND="$2"; shift ;;
+    --bind=*) BIND="${1#--bind=}" ;;
     --no-apt) DO_APT=0 ;;
     --no-service) DO_SERVICE=0 ;;
     --no-linger) DO_LINGER=0 ;;
     --keep-system-ttyd) KEEP_SYSTEM_TTYD=1 ;;
     --uninstall) UNINSTALL=1 ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
-    *) echo "unknown option: $arg" >&2; exit 2 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -125,7 +129,7 @@ fi
 # ------------------------------------------------------------------ config + systemd
 export PATH="$BIN_DIR:$PATH"
 info "creating config (~/.config/ccdeck) and the systemd user unit"
-"$TARGET" setup --force
+if [ -n "$BIND" ]; then "$TARGET" setup --force --bind "$BIND"; else "$TARGET" setup --force; fi
 
 if [ "$DO_SERVICE" -eq 1 ]; then
   if [ "$DO_LINGER" -eq 1 ] && command -v loginctl >/dev/null 2>&1; then
@@ -153,5 +157,9 @@ info "done."
 echo "  Web UI : (login URLs with token: ccdeck url)"
 "$TARGET" url | sed 's/?token=.*//; s/^/           /'
 echo "  CLI    : ccdeck new myproj --dir ~/src/myproj && ccdeck ls"
-echo "  Note   : the web UI listens on 0.0.0.0:8787 (all interfaces). Restrict it with a firewall or"
-echo "           set bind = \"127.0.0.1\" in ~/.config/ccdeck/config.toml (see README)"
+BIND_NOW="$(sed -n 's/^bind[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "${XDG_CONFIG_HOME:-$HOME/.config}/ccdeck/config.toml" | head -1)"
+echo "  Listen : ${BIND_NOW:-?} (change: ./install.sh --bind 127.0.0.1 | --bind 0.0.0.0)"
+if [ "$BIND_NOW" = "0.0.0.0" ]; then
+  echo "           all interfaces: if the page does not open from another PC, check the firewall"
+  echo "           (e.g. sudo ufw allow 8787/tcp). Do not expose it to the internet (see README)."
+fi

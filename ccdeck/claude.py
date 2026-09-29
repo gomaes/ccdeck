@@ -86,6 +86,45 @@ def claude_index(argv):
     return None
 
 
+def env_file_path(env_file):
+    """PATH value from ccdeck's systemd EnvironmentFile (or None)."""
+    try:
+        with open(env_file, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("PATH="):
+                    return line[5:].strip()
+    except OSError:
+        pass
+    return None
+
+
+def find_bin(bin="claude", extra_path=None):
+    """Absolute path of `bin` using PATH, plus ccdeck's service PATH (`extra_path`)."""
+    import shutil
+
+    if os.path.isabs(bin):
+        return bin if os.access(bin, os.X_OK) else None
+    return shutil.which(bin) or (shutil.which(bin, path=extra_path) if extra_path else None)
+
+
+def absolutize(cmd, claude_path):
+    """Replace a bare `claude` in cmd with its absolute path.
+
+    Login shells may reset PATH (e.g. Debian's /etc/profile), so the service's PATH is not
+    guaranteed to reach `$SHELL -lc 'claude ...'`."""
+    if not claude_path:
+        return cmd
+    try:
+        argv = _split(cmd)
+    except ValueError:
+        return cmd
+    idx = claude_index(argv)
+    if idx is None or argv[idx] != "claude":
+        return cmd
+    argv[idx] = claude_path
+    return shlex.join(argv)
+
+
 def is_claude_cmd(cmd):
     try:
         return claude_index(_split(cmd)) is not None

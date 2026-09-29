@@ -123,3 +123,56 @@ def test_ensure_files_creates_private_config_with_token(tmp_path):
     tok = cfg["server"]["token"]
     ensure_files(p)  # idempotent
     assert load_config(p)["server"]["token"] == tok
+
+
+LEGACY_CONFIG = '''# ccdeck configuration
+# Changes take effect after `systemctl --user restart ccdeck`.
+
+[server]
+# Listen address. Keep 127.0.0.1 and use Tailscale / SSH port-forwarding for remote access.
+bind = "127.0.0.1"
+port = 8787
+# Must be true to bind to a non-loopback address (e.g. "0.0.0.0" or a Tailscale IP).
+allow_external = false
+token = "tok-0123456789abcdef0123"
+
+[ttyd]
+port = 7682
+'''
+
+
+def _paths(tmp_path):
+    p = Paths({"CCDECK_CONFIG_DIR": str(tmp_path / "c"), "CCDECK_DATA_DIR": str(tmp_path / "d")})
+    import os
+    os.makedirs(p.config_dir)
+    return p
+
+
+def test_legacy_generated_config_is_migrated_to_0000(tmp_path):
+    p = _paths(tmp_path)
+    open(p.config_file, "w").write(LEGACY_CONFIG)
+    ensure_files(p)
+    s = load_config(p)["server"]
+    assert (s["bind"], s["allow_external"], s["token"], s["port"]) == ("0.0.0.0", True, "tok-0123456789abcdef0123", 8787)
+    assert load_config(p)["ttyd"]["port"] == 7682
+
+
+def test_user_edited_bind_is_kept(tmp_path):
+    p = _paths(tmp_path)
+    open(p.config_file, "w").write('[server]\nbind = "127.0.0.1"\ntoken = "tok-0123456789abcdef0123"\n')
+    ensure_files(p)
+    assert load_config(p)["server"]["bind"] == "127.0.0.1"
+
+
+def test_set_server_bind(tmp_path):
+    from ccdeck.config import set_server_bind
+
+    p = _paths(tmp_path)
+    open(p.config_file, "w").write('# x\n[server]\ntoken = "tok-0123456789abcdef0123"\n\n[ttyd]\nport = 1\n')
+    set_server_bind(p, "0.0.0.0")
+    s = load_config(p)["server"]
+    assert (s["bind"], s["allow_external"]) == ("0.0.0.0", True) and load_config(p)["ttyd"]["port"] == 1
+    set_server_bind(p, "127.0.0.1")
+    assert load_config(p)["server"]["bind"] == "127.0.0.1"
+    with pytest.raises(ValueError):
+        set_server_bind(p, '0.0.0.0"\nx = "')

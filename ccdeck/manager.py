@@ -67,7 +67,9 @@ class Manager:
         name = rec["name"]
         self.tmux.ensure_server()
         env = {"CCDECK_SESSION": name}
-        argv = self._shell_argv(command)
+        cbin = claude.find_bin(self.cfg["claude"].get("bin", "claude"),
+                               claude.env_file_path(self.paths.env_file))
+        argv = self._shell_argv(claude.absolutize(command, cbin))
         if self.tmux.has_session(name):
             self.tmux.respawn(name, rec["cwd"], argv, env)
         else:

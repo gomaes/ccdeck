@@ -170,6 +170,10 @@ ccdeck の Web UI は **あなたのユーザー権限で任意のコマンド�
 ## トラブルシューティング
 
 - `ccdeck doctor` で tmux / ttyd / claude / linger / ポート / 権限を確認できます
+- 他の PC から開けない: `ccdeck doctor` の `bind address` を確認してください。`127.0.0.1` なら
+  `./install.sh --bind 0.0.0.0`(または `ccdeck setup --bind 0.0.0.0 && systemctl --user restart ccdeck`)。
+  `0.0.0.0` なのに繋がらない場合はファイアウォールを確認(例: `sudo ufw allow 8787/tcp`)
+  - v0.1.0 の初回インストールで生成された未編集の config.toml は、再インストール時に自動で `0.0.0.0` に移行します
 - サービスのログ: `journalctl --user -u ccdeck -f`
 - claude が見つからない: セッションは `$SHELL -lc '<cmd>'` で起動されます。ログインシェルの PATH に claude を入れるか、
   `--cmd /full/path/to/claude` を指定してください。サービスの環境は `~/.config/ccdeck/env`(`ccdeck setup --force` で再生成)

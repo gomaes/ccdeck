@@ -189,14 +189,56 @@ def _self_exec():
     return "%s %s" % (sys.executable, arg0)
 
 
+def find_claude_dir():
+    """Directory containing the `claude` executable, looked up like the user's own shell would."""
+    import glob
+    import shutil
+
+    found = shutil.which("claude")
+    if not found:
+        shell = os.environ.get("SHELL") or "/bin/bash"
+        try:
+            # interactive login shell: picks up PATH set in ~/.bashrc (nvm, npm prefix, ...)
+            p = subprocess.run([shell, "-lic", "command -v claude"], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=15)
+            cand = (p.stdout.strip().splitlines() or [""])[-1]
+            if cand.startswith("/") and os.access(cand, os.X_OK):
+                found = cand
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if not found:
+        pats = ["~/.claude/local/claude", "~/.local/bin/claude", "~/.npm-global/bin/claude", "~/.bun/bin/claude",
+                "~/.volta/bin/claude", "~/.local/share/pnpm/claude", "~/.nvm/versions/node/*/bin/claude"]
+        for pat in pats:
+            hits = sorted(glob.glob(os.path.expanduser(pat)))
+            if hits and os.access(hits[-1], os.X_OK):
+                found = hits[-1]
+                break
+    return os.path.dirname(found) if found else None
+
+
 def cmd_setup(args):
+    from .config import set_server_bind
+
     paths = Paths()
     created = ensure_files(paths)
     for c in created:
         print("created " + c)
+    if args.bind:
+        try:
+            set_server_bind(paths, args.bind)
+        except ValueError as e:
+            raise CCDeckError(str(e))
+        print("set [server] bind = %s in %s" % (args.bind, paths.config_file))
     if args.force or not os.path.exists(paths.env_file):
         path = os.environ.get("PATH", "")
         extra = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.claude/local")]
+        cdir = find_claude_dir()
+        if cdir:
+            extra.append(cdir)
+            print("claude found in " + cdir)
+        else:
+            print("warning: claude not found; add its directory to PATH in %s" % paths.env_file, file=sys.stderr)
         parts = path.split(os.pathsep)
         for e in extra:
             if e not in parts:
@@ -381,6 +423,7 @@ def build_parser():
     s = sub.add_parser("setup", help="create config, tmux.conf and the systemd user unit")
     s.add_argument("--enable", action="store_true", help="daemon-reload + enable + restart the service")
     s.add_argument("--force", action="store_true", help="rewrite the env file")
+    s.add_argument("--bind", help='set [server] bind in config.toml (e.g. "0.0.0.0" or "127.0.0.1")')
     s.set_defaults(func=cmd_setup)
 
     s = sub.add_parser("url", help="print the login URL (contains the token!)")

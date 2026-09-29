@@ -288,3 +288,23 @@ def test_watchdog_stale_limit_message_becomes_idle(mgr, env):
     clock.t += 3600  # message still on screen an hour after the reset
     wd.tick()
     assert mgr.store.get("old")["state"] == "idle"
+
+
+def test_absolutize_bare_claude():
+    assert claude.absolutize("FOO=1 claude --resume " + SID_A, "/opt/x/claude") == \
+        "FOO=1 /opt/x/claude --resume " + SID_A
+    assert claude.absolutize("/usr/bin/claude -c", "/opt/x/claude") == "/usr/bin/claude -c"
+    assert claude.absolutize("htop", "/opt/x/claude") == "htop"
+    assert claude.absolutize("claude", None) == "claude"
+
+
+def test_find_bin_uses_service_env_path(tmp_path, monkeypatch):
+    d = tmp_path / "hidden"
+    d.mkdir()
+    exe = d / "claude"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    envf = tmp_path / "env"
+    envf.write_text("# x\nPATH=%s:/usr/bin\nSHELL=/bin/bash\n" % d)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    assert claude.find_bin("claude", claude.env_file_path(str(envf))) == str(exe)
