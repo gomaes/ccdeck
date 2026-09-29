@@ -145,6 +145,9 @@ class FakeTmux:
         self.sent.append((name, "text", text))
 
     def send_key(self, name, key):
+        if key == "C-c" and name in self.sessions:  # the program exits on Ctrl+C
+            self.sessions[name]["dead"] = True
+            return
         self.sent.append((name, "key", key))
 
 

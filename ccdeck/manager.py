@@ -102,6 +102,29 @@ class Manager:
         return [r.get("claude_session_id") for r in self.store.all()
                 if r["name"] != name and r.get("cwd") == cwd]
 
+    def graceful_exit(self, name, timeout=None):
+        """Ask the program in the pane to exit (Ctrl+C, twice for interactive claude) and wait.
+
+        Killing claude outright skips its cleanup; e.g. `claude rc` then keeps a stale Remote
+        Control session id in ~/.claude/projects/<cwd>/bridge-pointer.json and later runs fail
+        with "CCR v2 worker registration failed ... 404". Returns True if the process exited."""
+        if timeout is None:
+            timeout = float(self.cfg["claude"].get("exit_timeout", 10))
+        pane = self.tmux.panes().get(name)
+        if pane is None or pane.dead or timeout <= 0:
+            return True
+        end = time.time() + timeout
+        next_key = 0.0
+        while time.time() < end:
+            if time.time() >= next_key:
+                self.tmux.send_key(name, "C-c")
+                next_key = time.time() + 1.0
+            time.sleep(0.2)
+            pane = self.tmux.panes().get(name)
+            if pane is None or pane.dead:
+                return True
+        return False
+
     def _launch(self, rec, command):
         name = rec["name"]
         self.tmux.ensure_server()
@@ -110,6 +133,7 @@ class Manager:
                                claude.env_file_path(self.paths.env_file))
         argv = self._shell_argv(claude.absolutize(command, cbin))
         if self.tmux.has_session(name):
+            self.graceful_exit(name)
             self.tmux.respawn(name, rec["cwd"], argv, env)
         else:
             self.tmux.new_session(name, rec["cwd"], argv, env)
@@ -186,6 +210,7 @@ class Manager:
 
     def stop(self, name):
         self.store.require(name)
+        self.graceful_exit(name)
         self.tmux.kill_session(name)
         with self.lock:
             self.runtime.get(name, {}).pop("status", None)
@@ -193,6 +218,7 @@ class Manager:
 
     def delete(self, name):
         validate_name(name)
+        self.graceful_exit(name)
         self.tmux.kill_session(name)
         rec = self.store.delete(name)
         with self.lock:

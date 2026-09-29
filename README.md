@@ -206,6 +206,12 @@ ccdeck の Web UI は **あなたのユーザー権限で任意のコマンド�
 - claude が見つからない: セッションは `$SHELL -lc '<cmd>'` で起動されます。ログインシェルの PATH に claude を入れるか、
   `--cmd /full/path/to/claude` を指定してください。サービスの環境は `~/.config/ccdeck/env`(`ccdeck setup --force` で再生成)
 - tmux を直接触る: `tmux -L ccdeck ls` / `tmux -L ccdeck attach -t <name>`
+- `claude rc` で毎回 `Error: CCR v2 worker registration failed for session cse_... 404` が出る
+  (同じ `cse_...` ID が繰り返し出る): 以前の Remote Control セッションが正常終了せず、その ID が
+  `~/.claude/projects/<cwd の英数字以外を - に置換>/bridge-pointer.json` に残っている可能性があります。
+  claude rc を止めてからこのファイルを退避(`mv bridge-pointer.json bridge-pointer.json.bak`)して起動し直してください。
+  ccdeck は再起動・停止・削除のとき、まず Ctrl+C を送って claude の終了を最大 `[claude] exit_timeout` 秒(既定 10)待つので、
+  これ以降は起きにくくなっています
 - 状態判定は Claude Code の画面文言に依存するヒューリスティックです。Claude Code の表示が変わると
   waiting-input / rate-limited の判定がずれることがあります(`ccdeck/detect.py` のパターンで調整できます)
 

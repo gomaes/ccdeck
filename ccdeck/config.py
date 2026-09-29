@@ -39,6 +39,9 @@ DEFAULTS = {
         # Pass the ccdeck name to claude: `--name <name>` (interactive display name /
         # `claude rc --name`, the session name shown on claude.ai/code).
         "name_sessions": True,
+        # restart / stop / delete: send Ctrl+C and wait up to this many seconds for claude to
+        # exit cleanly before killing it (0 = kill immediately)
+        "exit_timeout": 10,
         # How the session command is run: [$SHELL, *shell_flags, cmd]
         "shell_flags": ["-lc"],
     },

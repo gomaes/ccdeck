@@ -108,3 +108,19 @@ def test_session_names_cannot_inject(mgr, env):
     mgr.rename("-t", "-x")
     assert mgr.tmux.has_session("-x") and mgr.store.get("-x")
     mgr.delete("-x")
+
+
+def test_stop_and_restart_let_the_program_exit_cleanly(mgr, env):
+    """restart / stop send Ctrl+C and wait, so programs (e.g. `claude rc`) can clean up."""
+    marker = env / "cleaned"
+    script = env / "prog.sh"
+    script.write_text("#!/bin/sh\ntrap 'echo $$ >> %s; exit 0' INT\necho ready\nwhile :; do sleep 0.1; done\n" % marker)
+    script.chmod(0o755)
+    mgr.create("graceful", cwd=str(env), cmd=str(script))
+    assert wait_for(lambda: "ready" in mgr.tmux.capture("graceful"))
+    mgr.restart("graceful")
+    assert marker.exists() and len(marker.read_text().split()) == 1
+    assert wait_for(lambda: "ready" in mgr.tmux.capture("graceful"))
+    mgr.stop("graceful")
+    assert len(marker.read_text().split()) == 2
+    assert not mgr.tmux.has_session("graceful")
