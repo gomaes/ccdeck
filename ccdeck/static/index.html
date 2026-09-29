@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<title>ccdeck</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+:root {
+  --bg: #0d1117; --panel: #161b22; --panel2: #1c2230; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+  --accent: #1f6feb; --green: #3fb950; --yellow: #d29922; --orange: #db6d28; --red: #f85149; --purple: #a371f7;
+  --radius: 8px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+  cursor: pointer; white-space: nowrap; touch-action: manipulation; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--red); }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+input[type=checkbox] { width: 18px; height: 18px; vertical-align: middle; }
+
+header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border);
+  background: var(--panel); position: sticky; top: 0; z-index: 5; padding-top: max(8px, env(safe-area-inset-top)); }
+header h1 { font-size: 16px; margin: 0 8px 0 0; }
+header .spacer { flex: 1; }
+#conn { font-size: 12px; color: var(--muted); }
+#conn.bad { color: var(--red); }
+
+#layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); height: calc(100% - 49px); }
+#side { border-right: 1px solid var(--border); overflow-y: auto; padding: 8px; }
+#main { overflow: auto; padding: 8px; }
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px;
+  margin-bottom: 8px; cursor: pointer; }
+.card.open { border-color: var(--accent); }
+.card .row1 { display: flex; align-items: center; gap: 6px; }
+.card .name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .warn { color: var(--yellow); font-size: 12px; margin-top: 4px; }
+.card .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.card .acts button { padding: 3px 8px; font-size: 12px; }
+
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.s-running { color: var(--green); } .s-idle { color: var(--muted); } .s-waiting-input { color: var(--yellow); }
+.s-rate-limited { color: var(--purple); } .s-dead { color: var(--red); }
+
+#grid { display: grid; gap: 8px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
+.term { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); display: flex;
+  flex-direction: column; min-height: 0; height: var(--term-h, 70vh); }
+.term.max { position: fixed; inset: 0; z-index: 20; height: 100% !important; border-radius: 0; }
+.term .bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.term .bar .title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term .bar button { padding: 2px 8px; }
+.term .body { position: relative; flex: 1; min-height: 0; background: #000; }
+.term iframe { border: 0; width: 100%; height: 100%; display: block; }
+.term .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(13,17,23,.8); color: var(--muted); text-align: center; padding: 12px; }
+.term .overlay[hidden] { display: none; }
+.keys { display: flex; gap: 4px; padding: 4px 6px; border-top: 1px solid var(--border); overflow-x: auto; flex-wrap: nowrap;
+  padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+.keys button { padding: 4px 9px; font-size: 13px; }
+.keys input { flex: 1; min-width: 100px; }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; width: min(560px, 94vw); }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+dialog h2 { margin: 0 0 12px; font-size: 16px; }
+dialog label { display: block; margin: 8px 0 4px; color: var(--muted); font-size: 12px; }
+dialog label.chk { color: var(--text); font-size: 14px; }
+dialog input[type=text], dialog input[type=password] { width: 100%; }
+dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+#logDlg { width: min(1100px, 96vw); }
+#logText { background: #000; padding: 8px; border-radius: 6px; max-height: 70vh; overflow: auto; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre; margin: 0; }
+.err { color: var(--red); min-height: 1.2em; margin-top: 8px; font-size: 13px; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+  border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; z-index: 50; display: none; max-width: 90vw; }
+
+@media (max-width: 800px) {
+  #layout { display: block; height: auto; }
+  #side { border-right: 0; border-bottom: 1px solid var(--border); max-height: none; }
+  #grid { grid-template-columns: minmax(0, 1fr) !important; }
+  #main { overflow: visible; }
+  .term { height: 75vh; }
+  #colsSel { display: none; }
+  body.focus #side { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>ccdeck</h1>
+  <button class="primary" id="newBtn">＋ 新規</button>
+  <select id="colsSel" title="グリッド列数">
+    <option value="1">1列</option><option value="2" selected>2列</option><option value="3">3列</option><option value="4">4列</option>
+  </select>
+  <span class="spacer"></span>
+  <span id="conn">…</span>
+  <button id="menuBtn" title="その他">⋯</button>
+</header>
+<div id="layout">
+  <aside id="side"><div id="list"></div></aside>
+  <main id="main"><div id="grid"></div><div id="gridEmpty" class="empty">左の一覧からセッションを選ぶとターミナルが開きます</div></main>
+</div>
+
+<dialog id="loginDlg">
+  <form method="dialog" id="loginForm">
+    <h2>ccdeck ログイン</h2>
+    <label for="tokenIn">トークン (~/.config/ccdeck/config.toml の server.token / <code>ccdeck url</code>)</label>
+    <input type="password" id="tokenIn" autocomplete="current-password" required>
+    <div class="err" id="loginErr"></div>
+    <div class="btns"><button class="primary" type="submit">ログイン</button></div>
+  </form>
+</dialog>
+
+<dialog id="newDlg">
+  <form method="dialog" id="newForm">
+    <h2>新規セッション</h2>
+    <label for="nName">名前 (英数字 _ - / 32文字まで)</label>
+    <input type="text" id="nName" pattern="[a-zA-Z0-9_\-]{1,32}" required autocapitalize="off" autocorrect="off">
+    <label for="nDir">作業ディレクトリ</label>
+    <input type="text" id="nDir" autocapitalize="off" autocorrect="off">
+    <label for="nCmd">コマンド</label>
+    <input type="text" id="nCmd" autocapitalize="off" autocorrect="off">
+    <label class="chk"><input type="checkbox" id="nRestore"> serve 起動時に自動復旧 (auto_restore)</label>
+    <label class="chk"><input type="checkbox" id="nRate"> 使用量制限の解除後に自動で "continue" を送信</label>
+    <div class="err" id="newErr"></div>
+    <div class="btns"><button type="button" data-close>キャンセル</button><button class="primary" type="submit">作成</button></div>
+  </form>
+</dialog>
+
+<dialog id="optDlg">
+  <form method="dialog" id="optForm">
+    <h2 id="optTitle">設定</h2>
+    <label class="chk"><input type="checkbox" id="oRestore"> serve 起動時に自動復旧 (auto_restore)</label>
+    <label class="chk"><input type="checkbox" id="oRate"> 使用量制限の解除後に自動送信</label>
+    <label class="chk"><input type="checkbox" id="oStall"> 無出力が閾値を超えたら自動送信</label>
+    <label for="oText">自動送信テキスト</label>
+    <input type="text" id="oText">
+    <div class="err" id="optErr"></div>
+    <div class="btns"><button type="button" data-close>キャンセル</button><button class="primary" type="submit">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="logDlg">
+  <h2 id="logTitle">ログ</h2>
+  <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <select id="logLines"><option>200</option><option selected>2000</option><option>10000</option><option value="all">全部</option></select>
+    <button id="logReload">再読込</button><button id="logBottom">↓末尾</button><span class="spacer" style="flex:1"></span>
+    <button data-close>閉じる</button>
+  </div>
+  <pre id="logText"></pre>
+</dialog>
+
+<dialog id="menuDlg">
+  <h2>メニュー</h2>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <button id="restoreAllBtn">dead をすべて復旧</button>
+    <button id="closeAllBtn">開いているターミナルをすべて閉じる</button>
+    <button id="logoutBtn" class="danger">ログアウト</button>
+  </div>
+  <p style="color:var(--muted);font-size:12px" id="verInfo"></p>
+  <div class="btns"><button data-close>閉じる</button></div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem("ccdeck." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("ccdeck." + k, JSON.stringify(v)); } catch {} },
+};
+const STATE_LABEL = { "running": "running", "idle": "idle", "waiting-input": "waiting-input", "rate-limited": "rate-limited", "dead": "dead" };
+let sessions = [];
+let config = null;
+let openSet = LS.get("open", []);
+const panels = new Map();       // name -> panel object
+let pollTimer = null, pollFails = 0;
+
+function toast(msg, ms = 2500) {
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", ms);
+}
+
+async function api(path, opts = {}) {
+  const init = { method: opts.method || "GET", headers: { "X-CCDeck": "1" }, credentials: "same-origin" };
+  if (opts.body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
+  const r = await fetch(path, init);
+  if (r.status === 401 && !opts.noLogin) { showLogin(); throw new Error("unauthorized"); }
+  let data = null;
+  try { data = await r.json(); } catch {}
+  if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+  return data;
+}
+
+function fmtAge(s) {
+  if (s == null) return "-";
+  if (s < 60) return s + "秒";
+  if (s < 3600) return Math.floor(s / 60) + "分";
+  if (s < 86400) return Math.floor(s / 3600) + "時間" + Math.floor(s % 3600 / 60) + "分";
+  return Math.floor(s / 86400) + "日";
+}
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso); return d.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function shortPath(p) { return p; }
+
+/* ------------------------------------------------------------------ login */
+function showLogin() {
+  const d = $("#loginDlg");
+  if (!d.open) { stopPolling(); d.showModal(); $("#tokenIn").focus(); }
+}
+$("#loginForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api("/api/login", { method: "POST", body: { token: $("#tokenIn").value.trim() }, noLogin: true });
+    $("#loginDlg").close(); $("#tokenIn").value = ""; $("#loginErr").textContent = "";
+    await init();
+  } catch (err) { $("#loginErr").textContent = err.message; }
+});
+
+/* ------------------------------------------------------------------ list */
+function renderList() {
+  const list = $("#list");
+  if (!sessions.length) { list.innerHTML = '<div class="empty">セッションがありません。「＋ 新規」から作成</div>'; return; }
+  list.innerHTML = sessions.map(s => {
+    const st = s.state;
+    let warn = "";
+    if (st === "rate-limited") warn = "⏳ 使用量制限" + (s.rate_limit_reset ? "（解除 " + esc(fmtTime(s.rate_limit_reset)) + "）" : "") +
+      (s.auto_continue && s.auto_continue.rate_limit ? " → 自動continue" : "");
+    else if (s.stalled) warn = "⚠ " + esc(fmtAge(s.silent_seconds)) + " 出力なし" + (s.auto_continue && s.auto_continue.stall ? "（自動送信ON）" : "");
+    else if (st === "dead") warn = s.stopped ? "停止中" : "✖ " + esc(s.state_reason || "") + (s.exit_status != null ? " (exit " + s.exit_status + ")" : "");
+    else if (st === "waiting-input") warn = "✋ 入力待ち";
+    const dead = st === "dead";
+    return `<div class="card ${openSet.includes(s.name) ? "open" : ""}" data-name="${esc(s.name)}">
+      <div class="row1"><span class="name">${esc(s.name)}</span>
+        <span class="badge s-${esc(st)}">${esc(STATE_LABEL[st] || st)}</span></div>
+      <div class="meta" title="${esc(s.cwd)}">${esc(fmtAge(s.silent_seconds))}前 · ${esc(shortPath(s.cwd))}</div>
+      ${warn ? `<div class="warn">${warn}</div>` : ""}
+      <div class="acts">
+        ${dead ? `<button data-act="resume">復旧</button>` : `<button data-act="stop">停止</button>`}
+        <button data-act="restart">再起動</button>
+        <button data-act="log">ログ</button>
+        <button data-act="opts">設定</button>
+        <button data-act="rename">名前</button>
+        <button data-act="delete" class="danger">削除</button>
+      </div></div>`;
+  }).join("");
+}
+
+$("#list").addEventListener("click", async e => {
+  const card = e.target.closest(".card"); if (!card) return;
+  const name = card.dataset.name;
+  const act = e.target.closest("button")?.dataset.act;
+  if (!act) { toggleOpen(name); return; }
+  e.stopPropagation();
+  const s = sessions.find(x => x.name === name);
+  try {
+    if (act === "resume") { await api(`/api/sessions/${name}/resume`, { method: "POST", body: {} }); toast(name + " を復旧しました"); }
+    else if (act === "stop") { if (!confirm(name + " を停止しますか？（記録は残ります）")) return; await api(`/api/sessions/${name}/stop`, { method: "POST", body: {} }); }
+    else if (act === "restart") {
+      const fresh = !confirm(name + " を再起動します。\nOK: 会話を引き継ぐ (--resume)\nキャンセル: 選び直す");
+      if (fresh && !confirm("新しい会話で再起動しますか？")) return;
+      await api(`/api/sessions/${name}/restart`, { method: "POST", body: { fresh } }); toast(name + " を再起動しました");
+    }
+    else if (act === "log") openLog(name);
+    else if (act === "opts") openOpts(s);
+    else if (act === "rename") {
+      const nn = prompt("新しい名前", name); if (!nn || nn === name) return;
+      await api(`/api/sessions/${name}/rename`, { method: "POST", body: { new_name: nn } });
+      if (openSet.includes(name)) { closePanel(name); openSet = openSet.filter(x => x !== name).concat([nn]); LS.set("open", openSet); }
+    }
+    else if (act === "delete") {
+      if (!confirm(name + " を削除しますか？（claude プロセスは終了し、記録も消えます）")) return;
+      await api(`/api/sessions/${name}`, { method: "DELETE" }); closePanel(name);
+    }
+    await refresh();
+  } catch (err) { toast("エラー: " + err.message, 4000); }
+});
+
+/* ------------------------------------------------------------------ terminals */
+function toggleOpen(name) {
+  if (openSet.includes(name)) { openSet = openSet.filter(x => x !== name); closePanel(name); }
+  else { openSet.push(name); }
+  LS.set("open", openSet);
+  syncPanels(); renderList();
+  if (window.matchMedia("(max-width: 800px)").matches && openSet.includes(name)) panels.get(name)?.el.scrollIntoView({ behavior: "smooth" });
+}
+
+function syncPanels() {
+  const names = new Set(sessions.map(s => s.name));
+  openSet = openSet.filter(n => names.has(n) || !sessions.length);
+  for (const n of [...panels.keys()]) if (!openSet.includes(n)) closePanel(n);
+  for (const n of openSet) if (!panels.has(n) && names.has(n)) createPanel(n);
+  for (const [n, p] of panels) {
+    const s = sessions.find(x => x.name === n);
+    if (s) { p.badge.className = "badge s-" + s.state; p.badge.textContent = STATE_LABEL[s.state] || s.state; }
+  }
+  $("#gridEmpty").style.display = panels.size ? "none" : "";
+  applyCols();
+}
+
+const KEYS = [
+  ["Enter", { key: "Enter" }], ["Esc", { key: "Escape" }], ["Ctrl+C", { key: "C-c" }],
+  ["continue", { text: "continue", enter: true }], ["y", { text: "y", enter: true }], ["n", { text: "n", enter: true }],
+  ["1", { text: "1" }], ["2", { text: "2" }], ["↑", { key: "Up" }], ["↓", { key: "Down" }], ["Tab", { key: "Tab" }], ["⇧Tab", { key: "BTab" }],
+];
+
+function createPanel(name) {
+  const el = document.createElement("div");
+  el.className = "term";
+  el.innerHTML = `<div class="bar"><span class="title"></span><span class="badge"></span>
+      <button data-a="reload" title="再接続">↻</button><button data-a="max" title="最大化">⤢</button><button data-a="close" title="閉じる">✕</button></div>
+    <div class="body"><iframe allow="clipboard-read; clipboard-write"></iframe><div class="overlay" hidden></div></div>
+    <div class="keys">${KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}
+      <input type="text" placeholder="テキスト送信 (Enter付き)" autocapitalize="off" autocorrect="off" enterkeyhint="send"></div>`;
+  $(".title", el).textContent = name;
+  const p = { name, el, iframe: $("iframe", el), overlay: $(".overlay", el), badge: $(".badge", el),
+              attempt: 0, timer: null, openTimer: null, state: "connecting" };
+  panels.set(name, p);
+  $("#grid").appendChild(el);
+  el.addEventListener("click", async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.a === "close") { toggleOpen(name); return; }
+    if (b.dataset.a === "max") { el.classList.toggle("max"); document.body.classList.toggle("focus", el.classList.contains("max")); return; }
+    if (b.dataset.a === "reload") { p.attempt = 0; connect(p); return; }
+    if (b.dataset.k != null) sendKeys(p.name, KEYS[+b.dataset.k][1]);
+  });
+  const inp = $("input", el);
+  inp.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); if (inp.value) { sendKeys(p.name, { text: inp.value, enter: true }); inp.value = ""; } }
+  });
+  connect(p);
+}
+
+async function sendKeys(name, body) {
+  try { await api(`/api/sessions/${name}/keys`, { method: "POST", body }); }
+  catch (err) { toast("送信失敗: " + err.message, 4000); }
+}
+
+function closePanel(name) {
+  const p = panels.get(name); if (!p) return;
+  clearTimeout(p.timer); clearTimeout(p.openTimer);
+  p.iframe.src = "about:blank"; p.el.remove(); panels.delete(name);
+  if (p.el.classList.contains("max")) document.body.classList.remove("focus");
+  $("#gridEmpty").style.display = panels.size ? "none" : "";
+}
+
+function setOverlay(p, text) { p.overlay.hidden = !text; p.overlay.textContent = text || ""; }
+
+function connect(p) {
+  clearTimeout(p.timer); clearTimeout(p.openTimer);
+  p.state = "connecting";
+  setOverlay(p, p.attempt ? `再接続中… (${p.attempt}回目)` : "接続中…");
+  p.iframe.src = "/tty/?arg=" + encodeURIComponent(p.name) + "&_=" + Date.now();
+  // if no websocket opens within 15s, treat as failure
+  p.openTimer = setTimeout(() => { if (p.state !== "open") onClosed(p, "timeout"); }, 15000);
+}
+
+function onOpened(p) {
+  clearTimeout(p.openTimer); p.state = "open"; p.attempt = 0; setOverlay(p, "");
+}
+
+function onClosed(p, why) {
+  if (!panels.has(p.name)) return;
+  clearTimeout(p.openTimer); clearTimeout(p.timer);
+  p.state = "closed";
+  // exponential backoff: 1s, 2s, 4s ... max 30s (+ jitter)
+  const delay = Math.min(30000, 1000 * Math.pow(2, p.attempt)) + Math.random() * 500;
+  p.attempt++;
+  setOverlay(p, `切断されました (${why})。${Math.round(delay / 1000)}秒後に再接続…  タップで今すぐ再接続`);
+  p.timer = setTimeout(() => connect(p), delay);
+}
+
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data || !e.data.ccdeck) return;
+  for (const p of panels.values()) {
+    if (p.iframe.contentWindow === e.source) {
+      if (e.data.ccdeck === "open") onOpened(p);
+      else if (e.data.ccdeck === "close") onClosed(p, "code " + e.data.code);
+    }
+  }
+});
+document.addEventListener("click", e => {
+  const ov = e.target.closest(".overlay"); if (!ov) return;
+  for (const p of panels.values()) if (p.overlay === ov && p.state === "closed") { p.attempt = 0; connect(p); }
+});
+function reconnectClosedNow() { for (const p of panels.values()) if (p.state === "closed") { p.attempt = 0; connect(p); } }
+window.addEventListener("online", () => { reconnectClosedNow(); startPolling(0); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { reconnectClosedNow(); startPolling(0); } });
+
+/* ------------------------------------------------------------------ polling */
+async function refresh() {
+  const data = await api("/api/sessions");
+  sessions = data.sessions || [];
+  renderList(); syncPanels();
+}
+function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
+function startPolling(delay = 3000) {
+  stopPolling();
+  pollTimer = setTimeout(async () => {
+    try {
+      await refresh(); pollFails = 0;
+      $("#conn").textContent = "更新 " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      $("#conn").classList.remove("bad");
+    } catch (err) {
+      if (err.message === "unauthorized") return;
+      pollFails++;
+      $("#conn").textContent = "サーバーに接続できません（再試行中）"; $("#conn").classList.add("bad");
+    }
+    if (!$("#loginDlg").open) startPolling(Math.min(30000, 3000 * Math.pow(2, pollFails)));
+  }, delay);
+}
+
+/* ------------------------------------------------------------------ dialogs */
+document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => b.closest("dialog").close()));
+
+$("#newBtn").addEventListener("click", () => {
+  const d = config?.defaults || {};
+  $("#nName").value = ""; $("#nDir").value = d.dir || "~"; $("#nCmd").value = d.cmd || "claude";
+  $("#nRestore").checked = d.auto_restore !== false; $("#nRate").checked = !!d.auto_continue_rate_limit;
+  $("#newErr").textContent = ""; $("#newDlg").showModal(); $("#nName").focus();
+});
+$("#newForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const name = $("#nName").value.trim();
+  try {
+    await api("/api/sessions", { method: "POST", body: {
+      name, dir: $("#nDir").value.trim(), cmd: $("#nCmd").value.trim(),
+      auto_restore: $("#nRestore").checked, auto_continue: { rate_limit: $("#nRate").checked } } });
+    $("#newDlg").close();
+    if (!openSet.includes(name)) { openSet.push(name); LS.set("open", openSet); }
+    await refresh();
+  } catch (err) { $("#newErr").textContent = err.message; }
+});
+
+let optName = null;
+function openOpts(s) {
+  optName = s.name; $("#optTitle").textContent = s.name + " の設定";
+  $("#oRestore").checked = !!s.auto_restore;
+  $("#oRate").checked = !!(s.auto_continue && s.auto_continue.rate_limit);
+  $("#oStall").checked = !!(s.auto_continue && s.auto_continue.stall);
+  $("#oText").value = (s.auto_continue && s.auto_continue.text) || "continue";
+  $("#optErr").textContent = ""; $("#optDlg").showModal();
+}
+$("#optForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api(`/api/sessions/${optName}`, { method: "PATCH", body: { auto_restore: $("#oRestore").checked,
+      auto_continue: { rate_limit: $("#oRate").checked, stall: $("#oStall").checked, text: $("#oText").value } } });
+    $("#optDlg").close(); await refresh();
+  } catch (err) { $("#optErr").textContent = err.message; }
+});
+
+let logName = null;
+async function loadLog() {
+  $("#logText").textContent = "読み込み中…";
+  try {
+    const d = await api(`/api/sessions/${logName}/log?lines=${$("#logLines").value}`);
+    const pre = $("#logText"); pre.textContent = d.text; pre.scrollTop = pre.scrollHeight;
+  } catch (err) { $("#logText").textContent = "エラー: " + err.message; }
+}
+function openLog(name) { logName = name; $("#logTitle").textContent = name + " のログ"; $("#logDlg").showModal(); loadLog(); }
+$("#logReload").addEventListener("click", loadLog);
+$("#logLines").addEventListener("change", loadLog);
+$("#logBottom").addEventListener("click", () => { const p = $("#logText"); p.scrollTop = p.scrollHeight; });
+
+$("#menuBtn").addEventListener("click", () => $("#menuDlg").showModal());
+$("#restoreAllBtn").addEventListener("click", async () => {
+  try { const d = await api("/api/restore-all", { method: "POST", body: {} }); toast("復旧: " + (d.restored.join(", ") || "なし")); $("#menuDlg").close(); refresh(); }
+  catch (err) { toast("エラー: " + err.message, 4000); }
+});
+$("#closeAllBtn").addEventListener("click", () => { for (const n of [...openSet]) toggleOpen(n); $("#menuDlg").close(); });
+$("#logoutBtn").addEventListener("click", async () => { await api("/api/logout", { method: "POST", body: {} }).catch(() => {}); location.reload(); });
+
+const colsSel = $("#colsSel");
+colsSel.value = String(LS.get("cols", 2));
+function applyCols() {
+  const c = +colsSel.value; $("#grid").style.setProperty("--cols", Math.max(1, Math.min(c, panels.size)));
+  $("#grid").style.setProperty("--term-h", c <= 2 ? "calc(100vh - 80px)" : "calc(50vh - 50px)");
+  LS.set("cols", c);
+}
+colsSel.addEventListener("change", applyCols);
+applyCols();
+
+async function init() {
+  try {
+    config = await api("/api/config");
+    $("#verInfo").textContent = "ccdeck " + config.version;
+    await refresh();
+    $("#conn").textContent = ""; startPolling();
+  } catch (err) {
+    if (err.message !== "unauthorized") { $("#conn").textContent = "接続エラー"; $("#conn").classList.add("bad"); startPolling(); }
+  }
+}
+init();
+</script>
+</body>
+</html>
