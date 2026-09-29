@@ -28,7 +28,6 @@ _WAITING = [re.compile(p, re.I) for p in (
     r"do you want to (proceed|make this edit|create|run|allow|continue|overwrite|delete|use)",
     r"^\s*[❯>›]\s*1\.\s*yes\b",
     r"no, and tell claude",
-    r"\(y/n\)|\[y/n\]",
     r"press enter to (continue|confirm|retry)",
     r"would you like to (proceed|continue)",
     r"waiting for (your )?(input|confirmation|approval)",
@@ -133,8 +132,15 @@ def is_running_marker(text):
     return any(p.search(ln) for ln in tail(text, 8) for p in _RUNNING)
 
 
+# y/n prompts count only while unanswered: at the end of one of the last two lines
+# ("Trust /home/x? [y/N] y" further up the screen is an already-answered prompt).
+_YN_OPEN = re.compile(r"(\(y/n\)|\[y/n\])\s*:?\s*$", re.I)
+
+
 def is_waiting(text):
-    return any(p.search(ln) for ln in tail(text, TAIL_LINES) for p in _WAITING)
+    if any(p.search(ln) for ln in tail(text, TAIL_LINES) for p in _WAITING):
+        return True
+    return any(_YN_OPEN.search(ln) for ln in tail(text, 2))
 
 
 def launched_cmd_is_shell(cmd):

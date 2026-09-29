@@ -35,11 +35,14 @@ WantedBy=default.target
 """
 
 
-def _name(s):
-    try:
-        return validate_name(s)
-    except CCDeckError as e:
-        raise argparse.ArgumentTypeError(str(e))
+def _width(s):
+    import unicodedata
+
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _pad(s, n):
+    return s + " " * max(0, n - _width(s))
 
 
 def _manager():
@@ -67,10 +70,11 @@ def cmd_new(args):
     m = _manager()
     ac = {"rate_limit": True} if args.auto_continue else None
     rec = m.create(args.name, cwd=args.dir, cmd=args.cmd,
-                   auto_restore=False if args.no_auto_restore else None, auto_continue=ac)
-    print("created %s in %s (%s)" % (rec["name"], rec["cwd"], rec["cmd"]))
+                   auto_restore=False if args.no_auto_restore else None, auto_continue=ac, title=args.title)
+    label = rec["name"] if rec["title"] == rec["name"] else "%s (id: %s)" % (rec["title"], rec["name"])
+    print("created %s in %s (%s)" % (label, rec["cwd"], rec["cmd"]))
     if args.attach:
-        return cmd_attach(argparse.Namespace(name=args.name))
+        return cmd_attach(argparse.Namespace(name=rec["name"]))
     print("attach: ccdeck attach %s" % rec["name"])
     return 0
 
@@ -90,12 +94,15 @@ def print_sessions(rows):
         print("no sessions (create one with: ccdeck new <name> --dir PATH)")
         return 0
     home = os.path.expanduser("~")
-    fmt = "%-20s %-14s %-7s %-9s %s"
-    print(fmt % ("NAME", "STATE", "SILENT", "SESSION", "CWD"))
-    for r in rows:
+    labels = [r["name"] if r.get("title", r["name"]) == r["name"] else "%s (%s)" % (r["title"], r["name"])
+              for r in rows]
+    w = max([20] + [_width(x) + 1 for x in labels])
+    fmt = "%s %-14s %-7s %-9s %s"
+    print(fmt % (_pad("NAME", w), "STATE", "SILENT", "SESSION", "CWD"))
+    for label, r in zip(labels, rows):
         state = r["state"] + ("*" if r.get("stalled") else "") + (" (stopped)" if r.get("stopped") else "")
         cwd = r["cwd"].replace(home, "~", 1) if r["cwd"].startswith(home) else r["cwd"]
-        print(fmt % (r["name"], state, _age(r.get("silent_seconds")),
+        print(fmt % (_pad(label, w), state, _age(r.get("silent_seconds")),
                      (r.get("claude_session_id") or "-")[:8], cwd))
         if r["state"] == "rate-limited" and r.get("rate_limit_reset"):
             print("    resets at %s" % r["rate_limit_reset"])
@@ -421,12 +428,13 @@ def build_parser():
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
 
     s = sub.add_parser("new", help="create a session")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.add_argument("--dir", "-d", help="working directory (default: config defaults.dir)")
     s.add_argument("--cmd", help='command (default: "claude")')
     s.add_argument("--no-auto-restore", action="store_true", help="do not restore automatically on serve start")
     s.add_argument("--auto-continue", action="store_true", help='send "continue" after a usage-limit reset')
     s.add_argument("--attach", "-a", action="store_true", help="attach right away")
+    s.add_argument("--title", help="display name (default: NAME). Any language, e.g. Japanese")
     s.set_defaults(func=cmd_new)
 
     s = sub.add_parser("ls", help="list sessions")
@@ -434,39 +442,39 @@ def build_parser():
     s.set_defaults(func=cmd_ls)
 
     s = sub.add_parser("attach", help="attach to a session (waits while it is dead)")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.set_defaults(func=cmd_attach)
 
     s = sub.add_parser("kill", help="kill a session and forget it")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.add_argument("--keep", action="store_true", help="keep the record (stop only)")
     s.set_defaults(func=cmd_kill)
 
     s = sub.add_parser("restart", help="restart claude (resuming the conversation)")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.add_argument("--fresh", action="store_true", help="start a new conversation instead of resuming")
     s.set_defaults(func=cmd_restart)
 
     s = sub.add_parser("resume", help="restore a dead session (claude --resume / --continue)")
-    s.add_argument("name", type=_name, nargs="?")
+    s.add_argument("name", nargs="?")
     s.add_argument("--all", action="store_true", help="restore every dead session")
     s.add_argument("--force", action="store_true", help="even if it looks alive")
     s.set_defaults(func=cmd_resume)
 
     s = sub.add_parser("rename", help="rename a session")
-    s.add_argument("old", type=_name)
-    s.add_argument("new", type=_name)
+    s.add_argument("old")
+    s.add_argument("new")
     s.set_defaults(func=cmd_rename)
 
     s = sub.add_parser("send", help="send keys / text to a session")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.add_argument("text", nargs="?")
     s.add_argument("--key", "-k", help="Enter, Escape, C-c, Up, Down, Tab, BTab ...")
     s.add_argument("--enter", "-e", action="store_true", help="press Enter after the text")
     s.set_defaults(func=cmd_send)
 
     s = sub.add_parser("log", help="print pane history (tmux capture-pane)")
-    s.add_argument("name", type=_name)
+    s.add_argument("name")
     s.add_argument("-n", "--lines", default=2000, type=lambda v: v if v == "all" else int(v))
     s.set_defaults(func=cmd_log)
 
@@ -513,6 +521,14 @@ def main(argv=None):
         print("\ncommands: ccdeck start | stop | status | new <name> | attach <name> | url | --help")
         return rc
     try:
+        # commands taking an existing session accept its id or its display name
+        if args.command in ("attach", "kill", "restart", "resume", "send", "log") and getattr(args, "name", None):
+            try:
+                args.name = _manager().resolve(args.name)
+            except CCDeckError:
+                if args.command != "attach":
+                    raise
+                validate_name(args.name)
         return args.func(args) or 0
     except BrokenPipeError:  # e.g. `ccdeck status | head`
         sys.stderr.close()

@@ -90,10 +90,19 @@ def test_dead_and_restore_with_real_tmux(mgr, env):
 def test_session_names_cannot_inject(mgr, env):
     from ccdeck import CCDeckError
 
-    for bad in ("x;touch pwned", "$(id)", "a b", "a/b", "../x", "x" * 33):
+    from ccdeck import NAME_RE
+
+    # arbitrary display names are accepted, but ids stay ^[a-zA-Z0-9_-]{1,32}$ and nothing is executed
+    for bad in ("x;touch pwned", "$(touch pwned2)", "`touch pwned3`", "a b", "../x", "x" * 40, "日本語"):
+        rec = mgr.create(bad, cwd=str(env))
+        assert NAME_RE.match(rec["name"]) and rec["title"] == bad
+        assert mgr.tmux.has_session(rec["name"])
+        mgr.delete(rec["name"])
+    for bad in ("", "a\nb", "\x1b]0;x\x07"):
         with pytest.raises(CCDeckError):
             mgr.create(bad, cwd=str(env))
-    assert not (env / "pwned").exists()
+    for f in ("pwned", "pwned2", "pwned3"):
+        assert not (env / f).exists()
     # names that look like options are passed safely as arguments
     mgr.create("-t", cwd=str(env))
     mgr.rename("-t", "-x")

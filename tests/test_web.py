@@ -55,7 +55,13 @@ def test_session_crud(client, env):
     rows = client.get("/api/sessions", headers=H()).json["sessions"]
     assert [s["name"] for s in rows] == ["web1"] and rows[0]["state"] == "running"
     assert client.post("/api/sessions", json={"name": "web1", "dir": str(env)}, headers=H()).status_code == 409
-    assert client.post("/api/sessions", json={"name": "bad name", "dir": str(env)}, headers=H()).status_code == 400
+    assert client.post("/api/sessions", json={"name": "a\nb", "dir": str(env)}, headers=H()).status_code == 400
+    r = client.post("/api/sessions", json={"name": "日本語", "dir": str(env)}, headers=H())
+    assert r.status_code == 201 and r.json["session"]["title"] == "日本語"
+    jid = r.json["session"]["name"]
+    r = client.post("/api/sessions/%s/rename" % jid, json={"new_name": "名前変更"}, headers=H())
+    assert r.json["session"]["name"] == jid and r.json["session"]["title"] == "名前変更"
+    assert client.delete("/api/sessions/" + jid, headers=H()).status_code == 200
     r = client.patch("/api/sessions/web1", json={"auto_continue": {"rate_limit": True}}, headers=H())
     assert r.json["session"]["auto_continue"]["rate_limit"] is True
     assert client.post("/api/sessions/web1/keys", json={"key": "Enter"}, headers=H()).status_code == 200

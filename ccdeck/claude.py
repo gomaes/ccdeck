@@ -192,24 +192,104 @@ def new_session_id():
 
 
 @functools.lru_cache(maxsize=8)
-def supports_session_id_flag(bin="claude"):
+def claude_help(bin="claude"):
     try:
         p = subprocess.run([bin, "--help"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True, timeout=20)
-        return "--session-id" in p.stdout
+        return p.stdout
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        return ""
 
 
-def plan_launch(cmd, *, mode, cwd, sid=None, exclude=(), use_session_id_flag=False, home=None):
+def supports_session_id_flag(bin="claude"):
+    return "--session-id" in claude_help(bin)
+
+
+def supports_name_flag(bin="claude"):
+    """`-n/--name` (interactive display name) and `claude remote-control --name` exist."""
+    return "--name <name>" in claude_help(bin)
+
+
+supports_session_id_flag.cache_clear = claude_help.cache_clear  # used by tests
+
+# `claude <subcommand>`: conversation flags (--resume/--session-id/--name ...) do not apply.
+REMOTE_CONTROL_SUBCOMMANDS = {"rc", "remote-control"}
+SUBCOMMANDS = REMOTE_CONTROL_SUBCOMMANDS | {
+    "mcp", "config", "update", "upgrade", "doctor", "install", "setup-token", "plugin", "plugins",
+    "agents", "migrate-installer", "auth", "self-hosted-runner", "api-key"}
+
+
+def subcommand(cmd):
+    """The claude subcommand (e.g. "rc") in cmd, or None for an interactive session."""
+    try:
+        argv = _split(cmd)
+    except ValueError:
+        return None
+    idx = claude_index(argv)
+    if idx is None:
+        return None
+    for tok in argv[idx + 1:]:
+        if tok.startswith("-"):
+            continue
+        return tok if tok in SUBCOMMANDS else None
+    return None
+
+
+def _has_opt(argv, *names):
+    return any(t.split("=", 1)[0] in names for t in argv)
+
+
+def with_display_name(cmd, title):
+    """Name the session after the ccdeck title.
+
+    - `claude rc` / `claude remote-control`  → `--name <title>` (name shown on claude.ai/code)
+    - interactive `claude`                   → `--name <title>` (prompt box, /resume picker, terminal
+      title) and, with a bare `--rc` / `--remote-control`, the Remote Control name as well
+    A name given explicitly in cmd is kept."""
+    if not title:
+        return cmd
+    argv = _split(cmd)
+    idx = claude_index(argv)
+    if idx is None:
+        return cmd
+    sub = subcommand(cmd)
+    if sub is not None and sub not in REMOTE_CONTROL_SUBCOMMANDS:
+        return cmd
+    out = list(argv)
+    if sub is None:
+        for i, tok in enumerate(out):
+            if tok in ("--rc", "--remote-control") and (i + 1 == len(out) or out[i + 1].startswith("-")):
+                out.insert(i + 1, title)
+                break
+    if not _has_opt(out, "--name", "-n"):
+        pos = out.index(sub, idx + 1) + 1 if sub else idx + 1
+        out[pos:pos] = ["--name", title]
+    return shlex.join(out)
+
+
+def plan_launch(cmd, *, mode, cwd, sid=None, exclude=(), use_session_id_flag=False, home=None,
+                title=None):
     """Decide the actual command line to run.
 
     mode = "new":    start fresh (adds --session-id <uuid> when supported)
     mode = "resume": --resume <known id> → --resume <guessed id> → --continue → fresh
+    title:           display name (see with_display_name); None = do not add a name
     Returns (command, session_id or None, how).
     """
     if not is_claude_cmd(cmd):
         return cmd, sid, "plain"
+    sub = subcommand(cmd)
+    if sub in REMOTE_CONTROL_SUBCOMMANDS:
+        # Remote Control server: its --session-id / --continue mean "reattach to an RC session",
+        # so never add conversation flags; a restart starts a new RC session with the same name.
+        return with_display_name(cmd, title), None, "remote-control"
+    if sub is not None:
+        return cmd, None, "plain"
+    command, nsid, how = _plan_interactive(cmd, mode, cwd, sid, exclude, use_session_id_flag, home)
+    return with_display_name(command, title), nsid, how
+
+
+def _plan_interactive(cmd, mode, cwd, sid, exclude, use_session_id_flag, home):
     if mode == "new":
         if has_resume_flags(cmd) or not use_session_id_flag:
             return cmd, sid, "as-is"

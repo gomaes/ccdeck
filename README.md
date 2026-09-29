@@ -71,7 +71,19 @@ ccdeck start / stop [--all] / status [--json]    # Web UI サーバーの起動�
 ccdeck serve                                    # Web UI + watchdog をフォアグラウンドで実行 (start / systemd が使用)
 ```
 
-セッション名は `^[a-zA-Z0-9_-]{1,32}$` に制限されます。
+### セッション名(日本語可)と claude 側の名前
+
+- 名前には日本語など任意の文字が使えます(64 文字まで、制御文字不可、重複不可)。
+  内部 ID(tmux セッション名・URL)は `^[a-zA-Z0-9_-]{1,32}$` に制限され、
+  名前がそのまま ID に使えない場合は自動生成されます(例: `テスト` → ID `s-5d520e`、`api サーバー` → `api`)
+- CLI では名前・ID のどちらでも指定できます: `ccdeck attach テスト` / `ccdeck attach s-5d520e`
+- ccdeck の名前は claude にも渡されます(`[claude] name_sessions = true`、既定で有効)
+  - `claude rc` / `claude remote-control` → `--name <名前>`: **claude.ai/code の一覧に同じ名前で表示**
+  - 対話の `claude` → `--name <名前>`(プロンプト欄・/resume 一覧・端末タイトル)。`--rc` 単体なら Remote Control 名にも
+  - `--cmd` に `--name` を自分で書いた場合はそちらが優先されます
+- 名前変更は ccdeck 上には即反映されますが、claude 側の名前は **次の再起動(「再起動」ボタン / `ccdeck restart`)** で反映されます
+- `claude rc` セッションの復旧・再起動は、同じ名前で新しい Remote Control セッションを作り直します
+  (rc の `--session-id` / `--continue` は会話 ID ではなく RC セッションの再接続用なので、ccdeck は付けません)
 
 ### Web UI
 

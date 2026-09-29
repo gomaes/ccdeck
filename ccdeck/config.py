@@ -36,6 +36,9 @@ DEFAULTS = {
         "bin": "claude",
         # Launch new sessions with `--session-id <uuid>` when claude supports it.
         "use_session_id_flag": True,
+        # Pass the ccdeck name to claude: `--name <name>` (interactive display name /
+        # `claude rc --name`, the session name shown on claude.ai/code).
+        "name_sessions": True,
         # How the session command is run: [$SHELL, *shell_flags, cmd]
         "shell_flags": ["-lc"],
     },
@@ -92,6 +95,8 @@ systemd_scope = true
 [claude]
 bin = "claude"
 use_session_id_flag = true
+# pass the ccdeck name to claude (--name): shown on claude.ai/code for `claude rc`
+name_sessions = true
 shell_flags = ["-lc"]
 
 [defaults]

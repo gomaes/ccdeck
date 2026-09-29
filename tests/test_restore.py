@@ -162,11 +162,61 @@ def test_create_records_session_id(mgr, env):
 
 
 def test_create_rejects_bad_names_and_dirs(mgr, env):
-    for bad in ("a b", "x;rm", "", "a" * 33, "../x"):
+    for bad in ("", "   ", "a" * 65, "tab\there", "new\nline", "\x1b[31m"):
         with pytest.raises(CCDeckError):
             mgr.create(bad, cwd=str(env))
     with pytest.raises(CCDeckError):
         mgr.create("ok", cwd=str(env / "missing"))
+
+
+def test_japanese_name_becomes_title_with_ascii_id(mgr, env):
+    from ccdeck import NAME_RE
+
+    rec = mgr.create("日本語のセッション", cwd=str(env))
+    assert rec["title"] == "日本語のセッション" and NAME_RE.match(rec["name"]) and rec["name"].startswith("s-")
+    assert mgr.resolve("日本語のセッション") == rec["name"] == mgr.resolve(rec["name"])
+    # the claude display name follows the title
+    assert "--name '日本語のセッション'" in mgr.tmux.launches[-1][2]
+    mixed = mgr.create("api サーバー", cwd=str(env))
+    assert (mixed["name"], mixed["title"]) == ("api", "api サーバー")
+    with pytest.raises(CCDeckError):
+        mgr.create("日本語のセッション", cwd=str(env))  # display names are unique
+    with pytest.raises(CCDeckError):
+        mgr.create("api", cwd=str(env))
+
+
+def test_rename_title_and_id(mgr, env):
+    mgr.create("work", cwd=str(env))
+    rec = mgr.rename("work", "作業用")            # non-ASCII: only the display name changes
+    assert (rec["name"], rec["title"]) == ("work", "作業用")
+    rec = mgr.rename("作業用", "backend")         # valid id: id follows (tmux, URL, CLI)
+    assert (rec["name"], rec["title"]) == ("backend", "backend") and "backend" in mgr.tmux.sessions
+    mgr.create("other", cwd=str(env))
+    with pytest.raises(CCDeckError):
+        mgr.rename("other", "backend")
+
+
+def test_display_name_flags():
+    assert claude.with_display_name("claude rc", "テスト") == "claude rc --name 'テスト'"
+    assert claude.with_display_name("claude remote-control --spawn worktree", "a b") == \
+        "claude remote-control --name 'a b' --spawn worktree"
+    assert claude.with_display_name("claude rc --name mine", "x") == "claude rc --name mine"
+    assert claude.with_display_name("claude --model opus", "x") == "claude --name x --model opus"
+    assert claude.with_display_name("claude --rc", "x") == "claude --name x --rc x"
+    assert claude.with_display_name("claude --rc keep", "x") == "claude --name x --rc keep"
+    assert claude.with_display_name("claude mcp list", "x") == "claude mcp list"
+    assert claude.with_display_name("htop", "x") == "htop"
+
+
+def test_plan_remote_control_never_adds_conversation_flags(tmp_path):
+    home = str(tmp_path)
+    transcript(home, "/w", SID_A, 1000)
+    for mode in ("new", "resume"):
+        cmd, sid, how = claude.plan_launch("claude rc", mode=mode, cwd="/w", sid=SID_A, use_session_id_flag=True,
+                                           home=home, title="テスト")
+        assert (cmd, sid, how) == ("claude rc --name 'テスト'", None, "remote-control")
+    cmd, sid, how = claude.plan_launch("claude", mode="resume", cwd="/w", sid=SID_A, home=home, title="t")
+    assert cmd == "claude --name t --resume " + SID_A
 
 
 def test_reconcile_restores_dead_sessions(mgr, env):

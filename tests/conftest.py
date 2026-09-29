@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 FAKE_CLAUDE = r'''#!/bin/sh
 # Fake `claude` used by tests: records its args, writes a transcript like Claude Code does, then waits.
-if [ "$1" = "--help" ]; then echo "  --session-id <uuid>  Use a specific session ID"; exit 0; fi
+if [ "$1" = "--help" ]; then echo "  --session-id <uuid>  Use a specific session ID"; echo "  -n, --name <name>  Set a display name"; exit 0; fi
 echo "fake-claude $*" >> "$FAKE_CLAUDE_LOG"
 sid=""
 prev=""

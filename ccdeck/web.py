@@ -111,7 +111,8 @@ def create_app(manager, token_getter, cookie_secure=False):
     def create():
         b = body()
         rec = manager.create(str(b.get("name", "")), cwd=b.get("dir") or None, cmd=b.get("cmd") or None,
-                             auto_restore=b.get("auto_restore"), auto_continue=b.get("auto_continue"))
+                             auto_restore=b.get("auto_restore"), auto_continue=b.get("auto_continue"),
+                             title=b.get("title") or None)
         return jsonify(session=rec), 201
 
     def one(name):
@@ -155,8 +156,8 @@ def create_app(manager, token_getter, cookie_secure=False):
     @app.route("/api/sessions/<name>/rename", methods=["POST"])
     def rename(name):
         new = str(body().get("new_name", ""))
-        manager.rename(validate_name(name), new)
-        return jsonify(session=one(new))
+        rec = manager.rename(validate_name(name), new)
+        return jsonify(session=one(rec["name"]))
 
     @app.route("/api/sessions/<name>/keys", methods=["POST"])
     def keys(name):

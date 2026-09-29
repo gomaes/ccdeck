@@ -74,6 +74,23 @@ def test_yn_prompt_is_waiting_input():
     assert cls("Overwrite file? (y/n)").state == "waiting-input"
 
 
+def test_answered_yn_prompt_is_not_waiting():
+    # claude rc after answering its questions (screen from a real session)
+    text = """
+Trust /home/claude? [y/N] y
+
+Enable Remote Control? (y/n) y
+
+·✓· Connected · claude · HEAD
+    Capacity: 1/32 · New sessions will be created in the current directory
+Continue coding in the Claude mobile app or https://claude.ai/code?environment=env_x
+space to show QR code
+"""
+    assert cls(text).state == "idle"
+    assert cls("Enable Remote Control? (y/n) ").state == "waiting-input"
+    assert cls("Trust /home/claude? [y/N]").state == "waiting-input"
+
+
 def test_old_prompt_scrolled_away_is_not_waiting():
     text = "Do you want to proceed?\n" + "\n".join("line %d" % i for i in range(30))
     assert cls(text).state == "idle"

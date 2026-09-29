@@ -6,7 +6,10 @@ import sys
 import threading
 import time
 
-from . import CCDeckError, claude, detect, validate_name
+import re
+import secrets
+
+from . import NAME_RE, CCDeckError, claude, detect, validate_name, validate_title
 from .config import Paths, ensure_files, load_config
 from .store import Store, new_record
 from .tmux import ALLOWED_KEYS, Tmux
@@ -48,6 +51,42 @@ class Manager:
         flags = self.cfg["claude"].get("shell_flags") or ["-lc"]
         return [shell] + list(flags) + [cmd]
 
+    @staticmethod
+    def title_of(rec):
+        return rec.get("title") or rec["name"]
+
+    def _launch_title(self):
+        c = self.cfg["claude"]
+        return bool(c.get("name_sessions", True)) and claude.supports_name_flag(c.get("bin", "claude"))
+
+    def resolve(self, ref):
+        """Session id from an id or a display name (title)."""
+        if isinstance(ref, str) and NAME_RE.match(ref) and self.store.get(ref):
+            return ref
+        hits = [r["name"] for r in self.store.all() if self.title_of(r) == ref]
+        if len(hits) == 1:
+            return hits[0]
+        raise CCDeckError("no such session: %s" % ref, 404)
+
+    def _check_title_free(self, title, own=None):
+        for r in self.store.all():
+            if r["name"] != own and (self.title_of(r) == title or (r["name"] == title and own != title)):
+                raise CCDeckError("session already exists: %s" % title, 409)
+
+    def _new_id(self, title):
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-")[:32]
+        if slug and NAME_RE.match(slug) and not self.store.get(slug) and not self.tmux.has_session(slug):
+            return slug
+        while True:
+            sid = "s-" + secrets.token_hex(3)
+            if not self.store.get(sid) and not self.tmux.has_session(sid):
+                return sid
+
+    def _set_window_title(self, name, title):
+        target = "=%s:" % name
+        self.tmux.run("set-option", "-w", "-t", target, "automatic-rename", "off", check=False)
+        self.tmux.run("rename-window", "-t", target, "--", title, check=False)
+
     def _use_sid_flag(self):
         c = self.cfg["claude"]
         return bool(c.get("use_session_id_flag")) and claude.supports_session_id_flag(c.get("bin", "claude"))
@@ -74,6 +113,7 @@ class Manager:
             self.tmux.respawn(name, rec["cwd"], argv, env)
         else:
             self.tmux.new_session(name, rec["cwd"], argv, env)
+        self._set_window_title(name, self.title_of(rec))
         now = time.time()
         with self.lock:
             rt = self.runtime.setdefault(name, {})
@@ -84,8 +124,17 @@ class Manager:
         return self.store.update(name, **fields)
 
     # -- operations ----------------------------------------------------------------
-    def create(self, name, cwd=None, cmd=None, auto_restore=None, auto_continue=None):
-        validate_name(name)
+    def create(self, name, cwd=None, cmd=None, auto_restore=None, auto_continue=None, title=None):
+        """`name` may be any display name (e.g. Japanese). If it is not a valid tmux/URL id
+        (^[a-zA-Z0-9_-]{1,32}$), it becomes the title and an ASCII id is generated."""
+        if isinstance(name, str) and NAME_RE.match(name):
+            title = validate_title(title) if title else name
+        else:
+            title = validate_title(title or name)
+            name = self._new_id(title)
+        self._check_title_free(title)
+        if self.store.get(name):
+            raise CCDeckError("session already exists: %s" % name, 409)
         d = self.cfg["defaults"]
         cwd = self.resolve_dir(cwd or d["dir"])
         cmd = (cmd or d["cmd"]).strip()
@@ -97,7 +146,9 @@ class Manager:
               "text": d.get("continue_text") or "continue"}
         ac.update({k: v for k, v in (auto_continue or {}).items() if k in ac})
         rec = new_record(name, cwd, cmd, d["auto_restore"] if auto_restore is None else auto_restore, ac)
-        command, sid, _ = claude.plan_launch(cmd, mode="new", cwd=cwd, use_session_id_flag=self._use_sid_flag())
+        rec["title"] = title
+        command, sid, _ = claude.plan_launch(cmd, mode="new", cwd=cwd, use_session_id_flag=self._use_sid_flag(),
+                                             title=title if self._launch_title() else None)
         rec["claude_session_id"] = sid
         self.store.add(rec)
         try:
@@ -125,7 +176,8 @@ class Manager:
         mode = "new" if fresh else "resume"
         command, sid, how = claude.plan_launch(
             rec["cmd"], mode=mode, cwd=rec["cwd"], sid=None if fresh else rec.get("claude_session_id"),
-            exclude=self._other_ids(name, rec["cwd"]), use_session_id_flag=self._use_sid_flag())
+            exclude=self._other_ids(name, rec["cwd"]), use_session_id_flag=self._use_sid_flag(),
+            title=self.title_of(rec) if self._launch_title() else None)
         self._launch(rec, command)
         now = time.time()
         return self._update(name, claude_session_id=sid, launched_at=now, last_output_at=now,
@@ -150,15 +202,26 @@ class Manager:
         return rec
 
     def rename(self, old, new):
-        validate_name(old)
-        validate_name(new)
-        self.store.require(old)
-        if self.store.get(new) or self.tmux.has_session(new):
-            raise CCDeckError("session already exists: %s" % new, 409)
+        """Change the display name. When the new name is also a valid id, the id (tmux session
+        name, URL, CLI name) follows it; otherwise only the display name changes.
+        claude picks up the new name (--name) on its next restart."""
+        old = self.resolve(old)
+        new = validate_title(new)
+        self._check_title_free(new, own=old)
+        if not NAME_RE.match(new) or new == old or self.store.get(new) or self.tmux.has_session(new):
+            if NAME_RE.match(new) and new != old and (self.store.get(new) or self.tmux.has_session(new)):
+                raise CCDeckError("session already exists: %s" % new, 409)
+            rec = self._update(old, title=new)
+            if self.tmux.has_session(old):
+                self._set_window_title(old, new)
+            return rec
         if self.tmux.has_session(old):
             self.tmux.rename_session(old, new)
             self.tmux.run("set-environment", "-t", "=" + new, "CCDECK_SESSION", new, check=False)
-        rec = self.store.rename(old, new)
+        self.store.rename(old, new)
+        rec = self._update(new, title=new)
+        if self.tmux.has_session(new):
+            self._set_window_title(new, new)
         with self.lock:
             if old in self.runtime:
                 self.runtime[new] = self.runtime.pop(old)
@@ -252,6 +315,7 @@ class Manager:
         runtime = runtime or {}
         last_change = runtime.get("last_change") or rec.get("last_output_at")
         d = dict(rec)
+        d.setdefault("title", rec["name"])
         d.update(
             state=st.state,
             state_reason=st.reason,

@@ -123,8 +123,8 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
 <dialog id="newDlg">
   <form method="dialog" id="newForm">
     <h2>新規セッション</h2>
-    <label for="nName">名前 (英数字 _ - / 32文字まで)</label>
-    <input type="text" id="nName" pattern="[a-zA-Z0-9_\-]{1,32}" required autocapitalize="off" autocorrect="off">
+    <label for="nName">名前（日本語可・64文字まで。claude rc では claude.ai/code 上の名前にもなります）</label>
+    <input type="text" id="nName" maxlength="64" required autocapitalize="off" autocorrect="off">
     <label for="nDir">作業ディレクトリ</label>
     <input type="text" id="nDir" autocapitalize="off" autocorrect="off">
     <label for="nCmd">コマンド</label>
@@ -215,6 +215,8 @@ function fmtTime(iso) {
   const d = new Date(iso); return d.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function shortPath(p) { return p; }
+const titleOf = s => (s && (s.title || s.name)) || "";
+const labelOf = name => titleOf(sessions.find(x => x.name === name)) || name;
 
 /* ------------------------------------------------------------------ login */
 function showLogin() {
@@ -244,7 +246,7 @@ function renderList() {
     else if (st === "waiting-input") warn = "✋ 入力待ち";
     const dead = st === "dead";
     return `<div class="card ${openSet.includes(s.name) ? "open" : ""}" data-name="${esc(s.name)}">
-      <div class="row1"><span class="name">${esc(s.name)}</span>
+      <div class="row1"><span class="name" title="id: ${esc(s.name)}">${esc(titleOf(s))}${titleOf(s) !== s.name ? ` <small style="color:var(--muted);font-weight:400">${esc(s.name)}</small>` : ""}</span>
         <span class="badge s-${esc(st)}">${esc(STATE_LABEL[st] || st)}</span></div>
       <div class="meta" title="${esc(s.cwd)}">${esc(fmtAge(s.silent_seconds))}前 · ${esc(shortPath(s.cwd))}</div>
       ${warn ? `<div class="warn">${warn}</div>` : ""}
@@ -266,23 +268,26 @@ $("#list").addEventListener("click", async e => {
   if (!act) { toggleOpen(name); return; }
   e.stopPropagation();
   const s = sessions.find(x => x.name === name);
+  const label = titleOf(s) || name;
   try {
-    if (act === "resume") { await api(`/api/sessions/${name}/resume`, { method: "POST", body: {} }); toast(name + " を復旧しました"); }
-    else if (act === "stop") { if (!confirm(name + " を停止しますか？（記録は残ります）")) return; await api(`/api/sessions/${name}/stop`, { method: "POST", body: {} }); }
+    if (act === "resume") { await api(`/api/sessions/${name}/resume`, { method: "POST", body: {} }); toast(label + " を復旧しました"); }
+    else if (act === "stop") { if (!confirm(label + " を停止しますか？（記録は残ります）")) return; await api(`/api/sessions/${name}/stop`, { method: "POST", body: {} }); }
     else if (act === "restart") {
-      const fresh = !confirm(name + " を再起動します。\nOK: 会話を引き継ぐ (--resume)\nキャンセル: 選び直す");
+      const fresh = !confirm(label + " を再起動します。\nOK: 会話を引き継ぐ (--resume)\nキャンセル: 選び直す");
       if (fresh && !confirm("新しい会話で再起動しますか？")) return;
-      await api(`/api/sessions/${name}/restart`, { method: "POST", body: { fresh } }); toast(name + " を再起動しました");
+      await api(`/api/sessions/${name}/restart`, { method: "POST", body: { fresh } }); toast(label + " を再起動しました");
     }
     else if (act === "log") openLog(name);
     else if (act === "opts") openOpts(s);
     else if (act === "rename") {
-      const nn = prompt("新しい名前", name); if (!nn || nn === name) return;
-      await api(`/api/sessions/${name}/rename`, { method: "POST", body: { new_name: nn } });
-      if (openSet.includes(name)) { closePanel(name); openSet = openSet.filter(x => x !== name).concat([nn]); LS.set("open", openSet); }
+      const nn = prompt("新しい名前（日本語可）\n※ claude 側の名前 (--name / claude.ai/code 上の名前) は次の再起動で反映されます", label);
+      if (!nn || nn.trim() === label) return;
+      const r = await api(`/api/sessions/${name}/rename`, { method: "POST", body: { new_name: nn.trim() } });
+      const nid = r.session.name;
+      if (nid !== name && openSet.includes(name)) { closePanel(name); openSet = openSet.filter(x => x !== name).concat([nid]); LS.set("open", openSet); }
     }
     else if (act === "delete") {
-      if (!confirm(name + " を削除しますか？（claude プロセスは終了し、記録も消えます）")) return;
+      if (!confirm(label + " を削除しますか？（claude プロセスは終了し、記録も消えます）")) return;
       await api(`/api/sessions/${name}`, { method: "DELETE" }); closePanel(name);
     }
     await refresh();
@@ -305,7 +310,8 @@ function syncPanels() {
   for (const n of openSet) if (!panels.has(n) && names.has(n)) createPanel(n);
   for (const [n, p] of panels) {
     const s = sessions.find(x => x.name === n);
-    if (s) { p.badge.className = "badge s-" + s.state; p.badge.textContent = STATE_LABEL[s.state] || s.state; }
+    if (s) { p.badge.className = "badge s-" + s.state; p.badge.textContent = STATE_LABEL[s.state] || s.state;
+             $(".title", p.el).textContent = titleOf(s); }
   }
   $("#gridEmpty").style.display = panels.size ? "none" : "";
   applyCols();
@@ -325,7 +331,7 @@ function createPanel(name) {
     <div class="body"><iframe allow="clipboard-read; clipboard-write"></iframe><div class="overlay" hidden></div></div>
     <div class="keys">${KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}
       <input type="text" placeholder="テキスト送信 (Enter付き)" autocapitalize="off" autocorrect="off" enterkeyhint="send"></div>`;
-  $(".title", el).textContent = name;
+  $(".title", el).textContent = labelOf(name);
   const p = { name, el, iframe: $("iframe", el), overlay: $(".overlay", el), badge: $(".badge", el),
               attempt: 0, timer: null, openTimer: null, state: "connecting" };
   panels.set(name, p);
@@ -436,18 +442,19 @@ $("#newForm").addEventListener("submit", async e => {
   e.preventDefault();
   const name = $("#nName").value.trim();
   try {
-    await api("/api/sessions", { method: "POST", body: {
+    const r = await api("/api/sessions", { method: "POST", body: {
       name, dir: $("#nDir").value.trim(), cmd: $("#nCmd").value.trim(),
       auto_restore: $("#nRestore").checked, auto_continue: { rate_limit: $("#nRate").checked } } });
     $("#newDlg").close();
-    if (!openSet.includes(name)) { openSet.push(name); LS.set("open", openSet); }
+    const nid = r.session.name;
+    if (!openSet.includes(nid)) { openSet.push(nid); LS.set("open", openSet); }
     await refresh();
   } catch (err) { $("#newErr").textContent = err.message; }
 });
 
 let optName = null;
 function openOpts(s) {
-  optName = s.name; $("#optTitle").textContent = s.name + " の設定";
+  optName = s.name; $("#optTitle").textContent = titleOf(s) + " の設定";
   $("#oRestore").checked = !!s.auto_restore;
   $("#oRate").checked = !!(s.auto_continue && s.auto_continue.rate_limit);
   $("#oStall").checked = !!(s.auto_continue && s.auto_continue.stall);
@@ -471,7 +478,7 @@ async function loadLog() {
     const pre = $("#logText"); pre.textContent = d.text; pre.scrollTop = pre.scrollHeight;
   } catch (err) { $("#logText").textContent = "エラー: " + err.message; }
 }
-function openLog(name) { logName = name; $("#logTitle").textContent = name + " のログ"; $("#logDlg").showModal(); loadLog(); }
+function openLog(name) { logName = name; $("#logTitle").textContent = labelOf(name) + " のログ"; $("#logDlg").showModal(); loadLog(); }
 $("#logReload").addEventListener("click", loadLog);
 $("#logLines").addEventListener("change", loadLog);
 $("#logBottom").addEventListener("click", () => { const p = $("#logText"); p.scrollTop = p.scrollHeight; });
