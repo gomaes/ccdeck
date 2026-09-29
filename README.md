@@ -18,7 +18,7 @@ Linux 上で複数の Claude Code セッションを並行稼働させ、ブラ�
 ## セットアップ
 
 ```bash
-git clone https://github.com/gomaes/ccdeck ccdeck && cd ccdeck
+git clone https://github.com/gomaes/ccdeck && cd ccdeck
 ./install.sh
 ```
 
