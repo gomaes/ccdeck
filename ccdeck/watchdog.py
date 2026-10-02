@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 
-from . import CCDeckError, claude
+from . import CCDeckError, claude, procs, resources
 
 
 class Watchdog:
@@ -18,6 +18,8 @@ class Watchdog:
         self._stop = threading.Event()
         self._thread = None
         self._restart_times = {}
+        self._cpu = resources.CpuSampler()
+        self._host_cpu = resources.HostCpu()
 
     # -- thread control --------------------------------------------------------
     def start(self):
@@ -43,6 +45,7 @@ class Watchdog:
         now = self.clock()
         panes = m.tmux.panes()
         records = m.store.all()
+        self._sample_resources(panes, records)
         for rec in records:
             name = rec["name"]
             pane = panes.get(name)
@@ -89,6 +92,26 @@ class Watchdog:
         if pinned is not None and pinned.timestamp() < now - 15 * 60:
             return st._replace(state="idle", reason="limit message is stale", rate_limit_reset=None)
         return st._replace(rate_limit_reset=pinned)
+
+    def _sample_resources(self, panes, records):
+        """CPU / memory of each pane's process tree + host totals (stored in runtime)."""
+        try:
+            allp = procs.all_procs()
+            for rec in records:
+                name = rec["name"]
+                pane = panes.get(name)
+                usage = None
+                if pane is not None and not pane.dead and pane.pid:
+                    pids = procs.tree(pane.pid, allp)
+                    usage = resources.tree_usage(pids, self._cpu, name)
+                with self.m.lock:
+                    self.m.runtime.setdefault(name, {})["usage"] = usage
+            self._cpu.forget({r["name"] for r in records})
+            total, avail = resources.host_memory()
+            self.m.host = {"cpu_percent": self._host_cpu.sample(), "cpu_count": resources.NCPU,
+                           "mem_total": total, "mem_available": avail}
+        except Exception as e:
+            self.log("resource sampling error: %r" % (e,))
 
     def _persist(self, rec, rt, st, now):
         fields = {}

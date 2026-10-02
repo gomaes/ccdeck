@@ -151,3 +151,20 @@ def test_remote_control_detection(env):
     assert procs.is_remote_control(["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "remote-control"])
     assert not procs.is_remote_control(["claude", "--model", "opus"])
     assert not procs.is_remote_control(["vim", "rc"])
+
+
+def test_watchdog_reports_cpu_memory_and_disk(mgr, env):
+    from ccdeck.resources import DiskScanner
+
+    rec = mgr.create("res", cmd="sh -c 'while :; do :; done'")
+    (open(os.path.join(rec["cwd"], "data.bin"), "wb")).write(b"d" * 300_000)
+    wd = Watchdog(mgr, log=lambda m: None)
+    wd.tick()
+    time.sleep(1.0)
+    wd.tick()
+    DiskScanner(mgr).scan_once()
+    row = {r["name"]: r for r in mgr.list_status()}["res"]
+    assert row["usage"]["cpu_percent"] >= 40 and row["usage"]["mem_bytes"] > 0 and row["usage"]["procs"] >= 1
+    assert row["disk"]["complete"] and row["disk"]["bytes"] >= 300_000
+    assert mgr.host["mem_total"] > 0
+    mgr.delete("res")

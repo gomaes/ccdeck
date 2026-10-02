@@ -47,6 +47,7 @@ ccdeck/                 Python パッケージ (stdlib + Flask のみ)
   workspace.py          セッションごとの作業ディレクトリ (<root>/<ランダム10文字>) の作成・安全な削除
   permissions.py        権限プロファイル → Claude Code settings (--settings / --permission-mode)
   procs.py              /proc からのプロセスツリー・remote-control プロセス検出
+  resources.py          CPU(プロセスツリーの CPU 時間差分)/ メモリ(PSS)/ ディスク(du 相当, 別スレッド)計測
   doctor.py             環境診断
   static/index.html     Web UI (単一 HTML + バニラ JS)
 tests/                  pytest (単体 + tmux 統合テスト)
@@ -116,7 +117,7 @@ claude 以外のコマンド(`--cmd "htop"` 等)は元コマンドをそのま�
 | GET | `/api/health` | 死活 |
 | POST | `/api/login` / `/api/logout` | `{token}` → Cookie 設定 / 削除 |
 | GET | `/api/config` | 既定値 (cmd, dir) など |
-| GET | `/api/sessions` | 一覧 (状態, 経過秒, cwd, rate limit 解除時刻 …) |
+| GET | `/api/sessions` | 一覧 (状態, 経過秒, cwd, rate limit 解除時刻, usage{cpu_percent, mem_bytes}, disk{bytes} …) + host{cpu_percent, mem_total, mem_available} |
 | POST | `/api/sessions` | 作成 `{name, dir, cmd, auto_restore, auto_continue, permissions}`(dir 省略時は `<root>/<ランダム>` を作成) |
 | GET | `/api/sessions/<name>` | 詳細 |
 | PATCH | `/api/sessions/<name>` | 設定変更 `{auto_restore, auto_continue:{rate_limit, stall, text}, permissions}` |

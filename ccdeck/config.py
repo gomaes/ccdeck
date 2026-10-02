@@ -67,6 +67,10 @@ DEFAULTS = {
         # (by default only done once at `serve` startup).
         "auto_restore_dead": False,
         "session_id_refresh": 30,
+        # size of each session's root directory: recomputed every disk_interval seconds,
+        # giving up (shown as "≥ size") after disk_max_seconds per directory
+        "disk_interval": 60,
+        "disk_max_seconds": 20,
     },
 }
 

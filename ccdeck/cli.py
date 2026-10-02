@@ -421,6 +421,11 @@ def cmd_serve(args):
 
     wd = Watchdog(m, log=log)
     wd.start()
+    from .resources import DiskScanner
+
+    disk = DiskScanner(m, interval=cfg["watchdog"].get("disk_interval", 60),
+                       max_seconds=cfg["watchdog"].get("disk_max_seconds", 20), log=log)
+    disk.start()
 
     ctx = {"token": lambda: token, "ttyd_port": ttyd.port, "ttyd_cred": ttyd.credential,
            "app_port": lambda: inner.server_port}
@@ -436,6 +441,7 @@ def cmd_serve(args):
         front.serve_forever()
     finally:
         wd.stop()
+        disk.stop()
         ttyd.stop()
         inner.shutdown()
         front.server_close()

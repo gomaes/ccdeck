@@ -42,6 +42,8 @@ class Manager:
         self.lock = threading.RLock()
         # in-memory runtime info maintained by the watchdog: {name: dict}
         self.runtime = {}
+        # host CPU / memory totals (set by the watchdog)
+        self.host = None
 
     # -- helpers ----------------------------------------------------------------
     def _shell_argv(self, cmd):
@@ -459,6 +461,8 @@ class Manager:
             pid=pane.pid if pane else None,
             exit_status=pane.dead_status if pane and pane.dead else None,
             auto_continue_next=runtime.get("auto_continue_next"),
+            usage=runtime.get("usage") if pane is not None and not pane.dead else None,
+            disk=runtime.get("disk"),
         )
         return d
 

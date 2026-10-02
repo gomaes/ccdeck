@@ -93,6 +93,11 @@ dialog .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
 .radio { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0; color: var(--text); font-size: 14px; }
 .radio input { margin-top: 3px; }
 dialog { max-height: 92vh; overflow-y: auto; }
+.res { font-variant-numeric: tabular-nums; }
+.res .hot { color: var(--orange); }
+.term .bar .res { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#host { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 800px) { .term .bar .res { display: none; } #host { display: none; } }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel2);
   border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; z-index: 50; display: none; max-width: 90vw; }
 
@@ -115,6 +120,7 @@ dialog { max-height: 92vh; overflow-y: auto; }
     <option value="1">1列</option><option value="2" selected>2列</option><option value="3">3列</option><option value="4">4列</option>
   </select>
   <span class="spacer"></span>
+  <span id="host" title="マシン全体の CPU 使用率(全コア=100%) / メモリ使用量"></span>
   <span id="conn">…</span>
   <button id="menuBtn" title="その他">⋯</button>
 </header>
@@ -241,6 +247,29 @@ function fmtTime(iso) {
   const d = new Date(iso); return d.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function shortPath(p) { return p; }
+function fmtBytes(b) {
+  if (b == null) return "-";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (b >= 100 || i === 0 ? Math.round(b) : b.toFixed(1)) + u[i];
+}
+// "CPU 12% · メモリ 350MB · ディスク 1.2GB" (CPU: 100% = one core busy)
+function fmtRes(s, compact) {
+  const parts = [], u = s.usage, d = s.disk;
+  if (u) {
+    const cpu = u.cpu_percent == null ? "…" : u.cpu_percent + "%";
+    parts.push(`<span class="${u.cpu_percent >= 80 ? "hot" : ""}">CPU ${cpu}</span>`);
+    parts.push((compact ? "" : "メモリ ") + fmtBytes(u.mem_bytes));
+  }
+  if (d && d.bytes != null) parts.push((compact ? "" : "ディスク ") + (d.complete ? "" : "≥") + fmtBytes(d.bytes));
+  return parts.join(" · ");
+}
+function resTitle(s) {
+  const u = s.usage, d = s.disk, t = [];
+  if (u) t.push(`CPU: プロセス ${u.procs} 個の合計 (1コア=100%)`, `メモリ: ${u.mem_kind === "pss" ? "PSS(共有分を按分)" : "RSS"} の合計`);
+  if (d && d.bytes != null) t.push(`ディスク: ${d.files} ファイル${d.complete ? "" : "(計測打ち切り、実際はこれ以上)"} / ${new Date(d.at * 1000).toLocaleTimeString()} 時点`);
+  return t.join("\n");
+}
 const titleOf = s => (s && (s.title || s.name)) || "";
 const labelOf = name => titleOf(sessions.find(x => x.name === name)) || name;
 
@@ -316,6 +345,7 @@ function renderList() {
         <span class="badge s-${esc(st)}">${esc(STATE_LABEL[st] || st)}</span></div>
       <div class="meta" title="${esc(s.cwd)}">${esc(fmtAge(s.silent_seconds))}前 · ${esc(shortPath(s.cwd))}</div>
       ${s.permissions_summary ? `<div class="meta">🔒 ${esc(s.permissions_summary)}</div>` : ""}
+      ${fmtRes(s) ? `<div class="meta res" title="${esc(resTitle(s))}">📊 ${fmtRes(s)}</div>` : ""}
       ${warn ? `<div class="warn">${warn}</div>` : ""}
       <div class="acts">
         ${dead ? `<button data-act="resume">復旧</button>` : `<button data-act="stop">停止</button>`}
@@ -390,7 +420,8 @@ function syncPanels() {
   for (const [n, p] of panels) {
     const s = sessions.find(x => x.name === n);
     if (s) { p.badge.className = "badge s-" + s.state; p.badge.textContent = STATE_LABEL[s.state] || s.state;
-             $(".title", p.el).textContent = titleOf(s); }
+             $(".title", p.el).textContent = titleOf(s);
+             const r = $(".bar .res", p.el); r.innerHTML = fmtRes(s, true); r.title = resTitle(s); }
   }
   $("#gridEmpty").style.display = panels.size ? "none" : "";
   applyCols();
@@ -405,7 +436,7 @@ const KEYS = [
 function createPanel(name) {
   const el = document.createElement("div");
   el.className = "term";
-  el.innerHTML = `<div class="bar"><span class="title"></span><span class="badge"></span>
+  el.innerHTML = `<div class="bar"><span class="title"></span><span class="res"></span><span class="badge"></span>
       <button data-a="reload" title="再接続">↻</button><button data-a="max" title="最大化">⤢</button><button data-a="close" title="閉じる">✕</button></div>
     <div class="body"><iframe allow="clipboard-read; clipboard-write"></iframe><div class="overlay" hidden></div></div>
     <div class="keys">${KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}
@@ -489,6 +520,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) { re
 async function refresh() {
   const data = await api("/api/sessions");
   sessions = data.sessions || [];
+  const h = data.host;
+  $("#host").textContent = h && h.mem_total ? `CPU ${h.cpu_percent == null ? "…" : h.cpu_percent + "%"} (${h.cpu_count}コア) · メモリ ${fmtBytes(h.mem_total - h.mem_available)}/${fmtBytes(h.mem_total)}` : "";
   renderList(); syncPanels();
 }
 function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }

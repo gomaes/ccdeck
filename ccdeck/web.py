@@ -110,7 +110,7 @@ def create_app(manager, token_getter, cookie_secure=False):
     # -- sessions ------------------------------------------------------------------
     @app.route("/api/sessions")
     def sessions():
-        return jsonify(sessions=manager.list_status())
+        return jsonify(sessions=manager.list_status(), host=getattr(manager, "host", None))
 
     @app.route("/api/sessions", methods=["POST"])
     def create():
