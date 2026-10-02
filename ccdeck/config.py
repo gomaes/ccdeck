@@ -71,6 +71,9 @@ DEFAULTS = {
         # giving up (shown as "≥ size") after disk_max_seconds per directory
         "disk_interval": 60,
         "disk_max_seconds": 20,
+        # memory of sessions that are not running is re-measured this often (seconds);
+        # CPU is only measured while a session is running
+        "mem_idle_interval": 60,
     },
 }
 

@@ -164,7 +164,24 @@ def test_watchdog_reports_cpu_memory_and_disk(mgr, env):
     wd.tick()
     DiskScanner(mgr).scan_once()
     row = {r["name"]: r for r in mgr.list_status()}["res"]
-    assert row["usage"]["cpu_percent"] >= 40 and row["usage"]["mem_bytes"] > 0 and row["usage"]["procs"] >= 1
+    assert row["state"] == "running"  # no output, but just launched
+    assert row["usage"]["cpu_active"] and row["usage"]["cpu_percent"] >= 40
+    assert row["usage"]["mem_bytes"] > 0 and row["usage"]["procs"] >= 1
     assert row["disk"]["complete"] and row["disk"]["bytes"] >= 300_000
-    assert mgr.host["mem_total"] > 0
     mgr.delete("res")
+
+
+def test_cpu_is_not_measured_for_sessions_that_are_not_running(mgr, env):
+    from ccdeck import resources
+
+    calls = []
+    orig = resources.CpuSampler.sample
+    rec = mgr.create("quiet", cmd="sh -c 'echo hi; exec sleep 600'")
+    wd = Watchdog(mgr, log=lambda m: None, clock=lambda: time.time() + 3600)  # long silent -> idle
+    wd._cpu.sample = lambda key, pids: calls.append(key) or orig(wd._cpu, key, pids)
+    wd.tick()
+    row = {r["name"]: r for r in mgr.list_status()}["quiet"]
+    assert row["state"] == "idle" and calls == []
+    assert row["usage"]["cpu_active"] is False and row["usage"]["cpu_percent"] is None
+    assert row["usage"]["mem_bytes"] > 0  # memory is still shown (re-measured every 60s)
+    mgr.delete("quiet")

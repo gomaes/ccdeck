@@ -425,6 +425,7 @@ def cmd_serve(args):
 
     disk = DiskScanner(m, interval=cfg["watchdog"].get("disk_interval", 60),
                        max_seconds=cfg["watchdog"].get("disk_max_seconds", 20), log=log)
+    m.disk_wake = disk.wake
     disk.start()
 
     ctx = {"token": lambda: token, "ttyd_port": ttyd.port, "ttyd_cred": ttyd.credential,

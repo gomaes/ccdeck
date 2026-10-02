@@ -96,8 +96,7 @@ dialog { max-height: 92vh; overflow-y: auto; }
 .res { font-variant-numeric: tabular-nums; }
 .res .hot { color: var(--orange); }
 .term .bar .res { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#host { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-@media (max-width: 800px) { .term .bar .res { display: none; } #host { display: none; } }
+@media (max-width: 800px) { .term .bar .res { display: none; } }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel2);
   border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; z-index: 50; display: none; max-width: 90vw; }
 
@@ -120,7 +119,6 @@ dialog { max-height: 92vh; overflow-y: auto; }
     <option value="1">1列</option><option value="2" selected>2列</option><option value="3">3列</option><option value="4">4列</option>
   </select>
   <span class="spacer"></span>
-  <span id="host" title="マシン全体の CPU 使用率(全コア=100%) / メモリ使用量"></span>
   <span id="conn">…</span>
   <button id="menuBtn" title="その他">⋯</button>
 </header>
@@ -253,20 +251,26 @@ function fmtBytes(b) {
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return (b >= 100 || i === 0 ? Math.round(b) : b.toFixed(1)) + u[i];
 }
-// "CPU 12% · メモリ 350MB · ディスク 1.2GB" (CPU: 100% = one core busy)
+// "CPU 12% · メモリ 350MB · ディスク 1.2GB" (CPU: 100% = one core busy; only measured while running)
 function fmtRes(s, compact) {
   const parts = [], u = s.usage, d = s.disk;
   if (u) {
-    const cpu = u.cpu_percent == null ? "…" : u.cpu_percent + "%";
-    parts.push(`<span class="${u.cpu_percent >= 80 ? "hot" : ""}">CPU ${cpu}</span>`);
-    parts.push((compact ? "" : "メモリ ") + fmtBytes(u.mem_bytes));
+    if (u.cpu_active) {
+      const cpu = u.cpu_percent == null ? "…" : u.cpu_percent + "%";
+      parts.push(`<span class="${u.cpu_percent >= 80 ? "hot" : ""}">CPU ${cpu}</span>`);
+    }
+    if (u.mem_bytes != null) parts.push((compact ? "" : "メモリ ") + fmtBytes(u.mem_bytes));
   }
   if (d && d.bytes != null) parts.push((compact ? "" : "ディスク ") + (d.complete ? "" : "≥") + fmtBytes(d.bytes));
   return parts.join(" · ");
 }
 function resTitle(s) {
   const u = s.usage, d = s.disk, t = [];
-  if (u) t.push(`CPU: プロセス ${u.procs} 個の合計 (1コア=100%)`, `メモリ: ${u.mem_kind === "pss" ? "PSS(共有分を按分)" : "RSS"} の合計`);
+  if (u) {
+    t.push(u.cpu_active ? `CPU: プロセス ${u.procs} 個の合計 (1コア=100%)` : "CPU: running のときだけ計測します");
+    if (u.mem_bytes != null) t.push(`メモリ: ${u.mem_kind === "pss" ? "PSS(共有分を按分)" : "RSS"} の合計` +
+      (u.cpu_active ? "" : ` / ${new Date(u.mem_at * 1000).toLocaleTimeString()} 時点`));
+  }
   if (d && d.bytes != null) t.push(`ディスク: ${d.files} ファイル${d.complete ? "" : "(計測打ち切り、実際はこれ以上)"} / ${new Date(d.at * 1000).toLocaleTimeString()} 時点`);
   return t.join("\n");
 }
@@ -520,8 +524,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) { re
 async function refresh() {
   const data = await api("/api/sessions");
   sessions = data.sessions || [];
-  const h = data.host;
-  $("#host").textContent = h && h.mem_total ? `CPU ${h.cpu_percent == null ? "…" : h.cpu_percent + "%"} (${h.cpu_count}コア) · メモリ ${fmtBytes(h.mem_total - h.mem_available)}/${fmtBytes(h.mem_total)}` : "";
   renderList(); syncPanels();
 }
 function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }

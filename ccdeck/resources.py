@@ -1,7 +1,7 @@
 """Resource usage of sessions (Linux /proc, stdlib only).
 
 - CPU:    utime+stime of every process in the pane's process tree; percent of one core
-          between two samples (100% = one core busy)
+          between two samples (100% = one core busy); sampled only for running sessions
 - memory: sum of PSS (/proc/<pid>/smaps_rollup; shared pages are split between the
           processes instead of counted twice), falling back to RSS
 - disk:   allocated size of the session's root directory (du-like: st_blocks, hard links
@@ -69,21 +69,24 @@ class CpuSampler:
         used = sum(max(0, t - prev[1][pid]) for pid, t in cur.items() if pid in prev[1])
         return round(100.0 * used / CLK_TCK / (now - prev[0]), 1)
 
+    def forget_key(self, key):
+        self.prev.pop(key, None)
+
     def forget(self, keep):
         for k in list(self.prev):
             if k not in keep:
                 del self.prev[k]
 
 
-def tree_usage(pids, sampler, key):
+def tree_memory(pids):
+    """(bytes, kind): summed PSS of the processes (kind "rss" if any fell back to RSS)."""
     mem, kind = 0, "pss"
     for pid in pids:
         b, k = memory(pid)
         mem += b
         if k == "rss":
             kind = "rss"
-    return {"cpu_percent": sampler.sample(key, pids), "mem_bytes": mem, "mem_kind": kind,
-            "procs": len(pids)}
+    return mem, kind
 
 
 def dir_usage(path, max_seconds=20.0, clock=time.monotonic):
@@ -126,39 +129,6 @@ def dir_usage(path, max_seconds=20.0, clock=time.monotonic):
     return total, files, True
 
 
-def host_memory():
-    """(total, available) bytes from /proc/meminfo."""
-    vals = {}
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                k, v = line.split(":", 1)
-                vals[k] = int(v.split()[0]) * 1024
-    except (OSError, ValueError):
-        return None, None
-    return vals.get("MemTotal"), vals.get("MemAvailable")
-
-
-class HostCpu:
-    """Whole-machine CPU busy percent (all cores = 100%) from /proc/stat deltas."""
-
-    def __init__(self):
-        self.prev = None
-
-    def sample(self):
-        try:
-            with open("/proc/stat") as f:
-                parts = [int(x) for x in f.readline().split()[1:]]
-        except (OSError, ValueError):
-            return None
-        idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
-        total = sum(parts[:8])
-        prev, self.prev = self.prev, (total, idle)
-        if prev is None or total <= prev[0]:
-            return None
-        return round(100.0 * (1 - (idle - prev[1]) / (total - prev[0])), 1)
-
-
 class DiskScanner:
     """Background thread recomputing each session's directory size every `interval` seconds."""
 
@@ -168,14 +138,16 @@ class DiskScanner:
         self.max_seconds = float(max_seconds)
         self.log = log or (lambda msg: None)
         self._stop = threading.Event()
+        # set by the manager when a session is created, so it is measured right away
+        # instead of polling (no periodic wakeups besides `interval`)
+        self.wake = threading.Event()
 
     def start(self):
         threading.Thread(target=self._loop, name="ccdeck-disk", daemon=True).start()
 
     def stop(self):
         self._stop.set()
-
-    TICK = 5.0  # how often to look for sessions that are due (new sessions: within seconds)
+        self.wake.set()
 
     def scan_once(self, only_due=False):
         now = time.time()
@@ -197,8 +169,9 @@ class DiskScanner:
 
     def _loop(self):
         while not self._stop.is_set():
+            self.wake.clear()
             try:
                 self.scan_once(only_due=True)
             except Exception as e:  # never kill the thread
                 self.log("disk scan error: %r" % (e,))
-            self._stop.wait(min(self.TICK, self.interval))
+            self.wake.wait(self.interval)

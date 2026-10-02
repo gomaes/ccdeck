@@ -42,8 +42,8 @@ class Manager:
         self.lock = threading.RLock()
         # in-memory runtime info maintained by the watchdog: {name: dict}
         self.runtime = {}
-        # host CPU / memory totals (set by the watchdog)
-        self.host = None
+        # threading.Event set when a session is created (wakes the disk scanner)
+        self.disk_wake = None
 
     # -- helpers ----------------------------------------------------------------
     def _shell_argv(self, cmd):
@@ -267,6 +267,8 @@ class Manager:
             if ws:
                 workspace.remove(rec)
             raise
+        if self.disk_wake is not None:
+            self.disk_wake.set()
         return self.store.get(name) or rec
 
     def resume(self, name, force=False):

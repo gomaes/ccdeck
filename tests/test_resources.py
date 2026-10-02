@@ -59,16 +59,6 @@ def test_dir_usage_time_limit(tmp_path):
     assert complete is False
 
 
-def test_host_stats():
-    total, avail = resources.host_memory()
-    assert total > avail > 0
-    h = resources.HostCpu()
-    assert h.sample() is None
-    time.sleep(0.2)
-    v = h.sample()
-    assert v is None or 0 <= v <= 100
-
-
 def test_disk_scanner_only_rescans_when_due(tmp_path):
     import threading
 

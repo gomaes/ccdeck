@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import threading
 import time
@@ -19,7 +20,6 @@ class Watchdog:
         self._thread = None
         self._restart_times = {}
         self._cpu = resources.CpuSampler()
-        self._host_cpu = resources.HostCpu()
 
     # -- thread control --------------------------------------------------------
     def start(self):
@@ -45,7 +45,7 @@ class Watchdog:
         now = self.clock()
         panes = m.tmux.panes()
         records = m.store.all()
-        self._sample_resources(panes, records)
+        self._allp = None  # /proc scanned lazily, only when a session needs sampling this tick
         for rec in records:
             name = rec["name"]
             pane = panes.get(name)
@@ -68,6 +68,12 @@ class Watchdog:
             st = self._pin_reset_time(rec, rt, st, now)
             with m.lock:
                 rt.update(status=st, checked_at=now)
+            self._sample_resources(rec, pane, st, rt, now)
+            # sessions created by another process (CLI): ask the disk thread to measure them
+            if (self.m.disk_wake is not None and "disk" not in rt and not rt.get("disk_requested")
+                    and os.path.isdir(rec.get("cwd") or "")):
+                rt["disk_requested"] = True
+                self.m.disk_wake.set()
             self._persist(rec, rt, st, now)
             if st.state == "dead":
                 self._maybe_auto_restore(rec, st, now)
@@ -93,23 +99,40 @@ class Watchdog:
             return st._replace(state="idle", reason="limit message is stale", rate_limit_reset=None)
         return st._replace(rate_limit_reset=pinned)
 
-    def _sample_resources(self, panes, records):
-        """CPU / memory of each pane's process tree + host totals (stored in runtime)."""
+    def _sample_resources(self, rec, pane, st, rt, now):
+        """Per-session CPU / memory of the pane's process tree.
+
+        CPU is sampled only while the session is `running`; for other states nothing is
+        measured (no reason to look, and fewer wakeups / less work for idle machines).
+        Memory: every tick while running, otherwise every `mem_idle_interval` seconds."""
+        name = rec["name"]
+        if pane is None or pane.dead or not pane.pid:
+            self._cpu.forget_key(name)
+            with self.m.lock:
+                rt["usage"] = None
+            return
+        running = st.state == "running"
+        prev = rt.get("usage") or {}
+        mem_due = running or now - prev.get("mem_at", 0) >= float(
+            self.m.cfg["watchdog"].get("mem_idle_interval", 60))
+        if not running:
+            self._cpu.forget_key(name)  # next running phase starts from a fresh baseline
+        if not running and not mem_due:
+            with self.m.lock:
+                rt["usage"] = dict(prev, cpu_percent=None, cpu_active=False)
+            return
         try:
-            allp = procs.all_procs()
-            for rec in records:
-                name = rec["name"]
-                pane = panes.get(name)
-                usage = None
-                if pane is not None and not pane.dead and pane.pid:
-                    pids = procs.tree(pane.pid, allp)
-                    usage = resources.tree_usage(pids, self._cpu, name)
-                with self.m.lock:
-                    self.m.runtime.setdefault(name, {})["usage"] = usage
-            self._cpu.forget({r["name"] for r in records})
-            total, avail = resources.host_memory()
-            self.m.host = {"cpu_percent": self._host_cpu.sample(), "cpu_count": resources.NCPU,
-                           "mem_total": total, "mem_available": avail}
+            if self._allp is None:
+                self._allp = procs.all_procs()
+            pids = procs.tree(pane.pid, self._allp)
+            usage = dict(prev)
+            usage.update(procs=len(pids), cpu_active=running,
+                         cpu_percent=self._cpu.sample(name, pids) if running else None)
+            if mem_due:
+                usage["mem_bytes"], usage["mem_kind"] = resources.tree_memory(pids)
+                usage["mem_at"] = now
+            with self.m.lock:
+                rt["usage"] = usage
         except Exception as e:
             self.log("resource sampling error: %r" % (e,))
 
